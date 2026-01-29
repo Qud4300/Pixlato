@@ -1,0 +1,38 @@
+{
+    "Retro GameBoy": {
+        "save_mode": "Pixelate",
+        "pixel_size": 4,
+        "color_count": 4,
+        "palette_mode": "GameBoy",
+        "dither": true,
+        "remove_bg": false,
+        "outline": false,
+        "edge_enhance": true,
+        "edge_sensitivity": 2.0,
+        "downsample_method": "Standard"
+    },
+    "Modern Pixel Art": {
+        "save_mode": "Style Only",
+        "pixel_size": 8,
+        "color_count": 16,
+        "palette_mode": "Limited",
+        "dither": true,
+        "remove_bg": true,
+        "outline": true,
+        "edge_enhance": false,
+        "edge_sensitivity": 1.0,
+        "downsample_method": "K-Means"
+    },
+    "High-Bit Classic": {
+        "save_mode": "Pixelate",
+        "pixel_size": 2,
+        "color_count": 256,
+        "palette_mode": "16-bit (4096 Colors)",
+        "dither": false,
+        "remove_bg": false,
+        "outline": false,
+        "edge_enhance": false,
+        "edge_sensitivity": 1.0,
+        "downsample_method": "Standard"
+    }
+}

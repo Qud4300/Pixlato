@@ -72,6 +72,11 @@ class PixelApp(ctk.CTk):
         self.current_inventory_id = None  # Currently selected image in inventory
         self.inventory_widgets = {}  # image_id -> item_frame
         
+        # Load Presets
+        self.presets_path = os.path.join(project_root, "palettes", "presets.json")
+        self.presets = {}
+        self.load_presets()
+        
         # Threading & Processing State
         self._is_processing = False
         self._pending_reprocess = False
@@ -228,6 +233,19 @@ class PixelApp(ctk.CTk):
         self.option_downsample.set("Standard")
         self.option_downsample.pack(pady=5, fill="x")
 
+        # Preset Section (New)
+        ctk.CTkLabel(self.param_frame, text="필터 프리셋 (Presets):", anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        preset_frame = ctk.CTkFrame(self.param_frame, fg_color="transparent")
+        preset_frame.pack(fill="x", pady=5)
+        
+        self.option_presets = ctk.CTkOptionMenu(preset_frame, values=["기본값 (Defaults)"], command=self.apply_preset)
+        self.option_presets.set("기본값 (Defaults)")
+        self.option_presets.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        self.btn_save_preset = ctk.CTkButton(preset_frame, text="💾", width=30, command=self.save_preset_dialog)
+        self.btn_save_preset.pack(side="right")
+        ToolTip(self.btn_save_preset, text="현재 설정을 새로운 프리셋으로 저장합니다.")
+
         # Magnifier Button (Saving space)
         # Magnifier Button (Saving space)
         self.btn_open_mag = ctk.CTkButton(self.param_frame, text="🔍 돋보기 열기", command=self.toggle_magnifier, fg_color="#d35400", hover_color="#e67e22")
@@ -308,6 +326,45 @@ class PixelApp(ctk.CTk):
         # Batch Export Button
         self.btn_batch_export = ctk.CTkButton(self.inventory_frame, text="일괄 저장 (Save All)", command=self.batch_export, height=35, fg_color="#3498db")
         self.btn_batch_export.pack(pady=10, padx=10, fill="x", side="bottom")
+
+    def load_presets(self):
+        """Loads presets from the JSON file."""
+        if os.path.exists(self.presets_path):
+            try:
+                with open(self.presets_path, "r", encoding="utf-8") as f:
+                    self.presets = json.load(f)
+                
+                # Update UI ComboBox
+                preset_names = list(self.presets.keys())
+                if preset_names:
+                    self.option_presets.configure(values=preset_names)
+                    # Don't set yet, keep "기본값 (Defaults)" or similar if it's not in keys
+                print(f"Loaded {len(self.presets)} presets.")
+            except Exception as e:
+                print(f"Error loading presets: {e}")
+
+    def apply_preset(self, preset_name):
+        """Applies a selected preset to the UI."""
+        if preset_name in self.presets:
+            print(f"Applying preset: {preset_name}")
+            self.restore_ui_state(self.presets[preset_name])
+
+    def save_preset_dialog(self):
+        """Opens a simple dialog to name and save the current preset."""
+        dialog = ctk.CTkInputDialog(text="새로운 프리셋 이름을 입력하세요:", title="프리셋 저장")
+        name = dialog.get_input()
+        if name:
+            self.presets[name] = self.capture_ui_state()
+            try:
+                with open(self.presets_path, "w", encoding="utf-8") as f:
+                    json.dump(self.presets, f, indent=4)
+                
+                # Update UI
+                self.option_presets.configure(values=list(self.presets.keys()))
+                self.option_presets.set(name)
+                print(f"Preset '{name}' saved.")
+            except Exception as e:
+                print(f"Error saving preset: {e}")
 
     def load_default_palette(self):
         path = os.path.join(self.palette_dir, "default_palette.json")
