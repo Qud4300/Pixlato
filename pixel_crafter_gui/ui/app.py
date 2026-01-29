@@ -477,7 +477,9 @@ class PixelApp(ctk.CTk):
         if not file_path: return
 
         state = ProjectManager.load_project(file_path)
-        if not state: return
+        if state is None:
+            messagebox.showerror("보안 오류", "프로젝트 파일이 손상되었거나 변조되었습니다.\n(Integrity check failed)")
+            return
 
         # Restore State
         try:
