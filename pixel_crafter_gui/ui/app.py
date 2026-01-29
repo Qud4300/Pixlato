@@ -116,28 +116,12 @@ class PixelApp(ctk.CTk):
         self.btn_save_proj = ctk.CTkButton(self.navbar, text="저장 (Save .pcp)", width=120, height=28, fg_color="#2c3e50", command=self.save_project_file)
         self.btn_save_proj.pack(side="left", padx=5)
 
-        # --- Sidebar ---
-        self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
+        # --- Sidebar (Scrollable) ---
+        self.sidebar = ctk.CTkScrollableFrame(self, width=320, corner_radius=0)
         self.sidebar.grid(row=1, column=0, sticky="nsew")
-        self.sidebar.grid_propagate(False) # CRITICAL: Prevent content from resizing sidebar
         
-        # Logo Integration
-        if os.path.exists(self.logo_path):
-            try:
-                pil_logo = Image.open(self.logo_path)
-                # Resize keeping aspect ratio, max width 250
-                base_width = 250
-                w_percent = (base_width / float(pil_logo.size[0]))
-                h_size = int((float(pil_logo.size[1]) * float(w_percent)))
-                
-                logo_ctk = ctk.CTkImage(light_image=pil_logo, dark_image=pil_logo, size=(base_width, h_size))
-                self.logo_label = ctk.CTkLabel(self.sidebar, text="", image=logo_ctk)
-            except Exception as e:
-                 print(f"Error loading logo: {e}")
-                 self.logo_label = ctk.CTkLabel(self.sidebar, text="Pixlato ✨", font=ctk.CTkFont(size=28, weight="bold"))
-        else:
-            self.logo_label = ctk.CTkLabel(self.sidebar, text="Pixlato ✨", font=ctk.CTkFont(size=28, weight="bold"))
-            
+        # App Title instead of Logo
+        self.logo_label = ctk.CTkLabel(self.sidebar, text="Pixlato ✨", font=ctk.CTkFont(size=28, weight="bold"))
         self.logo_label.pack(pady=20, padx=20)
 
         # Setting Mode Selection (Phase 19)
