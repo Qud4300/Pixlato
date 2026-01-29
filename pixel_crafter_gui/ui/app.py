@@ -13,7 +13,7 @@ from core.palette import apply_palette_unified
 from core.project_manager import ProjectManager
 from core.gif_processor import process_gif
 from core.image_manager import ImageManager
-from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector
+from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector, BatchExportWindow
 
 class PixelApp(ctk.CTk):
     def __init__(self):
@@ -1088,39 +1088,32 @@ class PixelApp(ctk.CTk):
             if self.image_manager.count() > 0:
                 self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
-    def select_inventory_image(self, image_id):
-        self.current_inventory_id = image_id
-        img_entry = self.image_manager.get_image(image_id)
-        if img_entry:
-            # Process and display this image using current settings
-            self.process_inventory_image(img_entry["pil_image"])
-
-    def process_inventory_image(self, pil_image):
-        """Unified entry point for processing an image from inventory."""
-        self._start_threaded_process("pil", pil_image)
-
     def batch_export(self):
+        """Opens the Batch Export dialog."""
         if self.image_manager.count() == 0:
+            print("Inventory is empty.")
             return
             
-        # Ask for output folder
-        output_dir = filedialog.askdirectory(parent=self, title="일괄 저장 폴더 선택")
-        if not output_dir:
-            return
-        
-        export_format = self.format_combo.get().lower()
+        BatchExportWindow(self, self._start_batch_export_process)
+
+    def _start_batch_export_process(self, output_dir, formats, window_ref):
+        """Initiates the threaded batch export."""
+        import concurrent.futures
         
         # Capture current Global settings as fallback
         global_params = self.capture_ui_state()
         setting_mode = self.setting_mode_switch.get()
+        all_entries = self.image_manager.get_all()
+        total_tasks = len(all_entries) * len(formats)
         
-        from core.processor import enhance_internal_edges, remove_background
-        from core.palette import apply_palette_unified
+        window_ref.log(f"🚀 {len(all_entries)}개 이미지 x {len(formats)}개 포맷 작업 시작...")
         
-        count = 0
-        for img_entry in self.image_manager.get_all():
+        def export_task(img_entry, fmt):
             try:
-                # Determine which parameters to use
+                from core.processor import enhance_internal_edges, remove_background
+                from core.palette import apply_palette_unified
+                
+                # Determine parameters
                 if setting_mode == "Individual" and img_entry["params"]:
                     p = img_entry["params"]
                 else:
@@ -1140,10 +1133,6 @@ class PixelApp(ctk.CTk):
                 pixel_size = p.get("pixel_size", 8)
                 small_w = max(1, pil_img.size[0] // pixel_size)
                 small_h = max(1, pil_img.size[1] // pixel_size)
-                
-                # Note: Batch export currently uses BOX resize. 
-                # We could support K-Means here too if needed.
-                # For consistency with current batch_export logic, sticking to BOX but using params.
                 small_img = pil_img.resize((small_w, small_h), resample=Image.BOX)
                 
                 # Apply palette
@@ -1161,24 +1150,45 @@ class PixelApp(ctk.CTk):
                 if p.get("outline", False):
                     processed = add_outline(processed)
                 
-                # Upscale (always to original size for batch export)
+                # Upscale
                 final = processed.resize(img_entry["pil_image"].size, resample=Image.NEAREST)
                 
                 # Handle format-specific conversion
-                if export_format in ["jpg", "bmp"]:
-                    # These formats don't support transparency
+                ext = fmt.lower()
+                if ext in ["jpg", "bmp"]:
                     final = final.convert("RGB")
                 
                 # Save
-                filename = f"{img_entry['name']}_pixel.{export_format}"
+                filename = f"{img_entry['name']}_pixel.{ext}"
                 save_path = os.path.join(output_dir, filename)
                 final.save(save_path)
-                count += 1
-                
+                return True, f"✅ {filename} 저장 완료"
             except Exception as e:
-                print(f"Error processing {img_entry['name']}: {e}")
-        
-        print(f"Batch export completed: {count} images saved to {output_dir}")
+                return False, f"❌ {img_entry['name']} ({fmt}) 실패: {e}"
+
+        def run_executor():
+            completed = 0
+            success_count = 0
+            
+            # Using ThreadPoolExecutor for I/O bound tasks
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                for entry in all_entries:
+                    for fmt in formats:
+                        futures.append(executor.submit(export_task, entry, fmt))
+                
+                for future in concurrent.futures.as_completed(futures):
+                    success, msg = future.result()
+                    completed += 1
+                    if success: success_count += 1
+                    
+                    self.after(0, lambda m=msg: window_ref.log(m))
+                    self.after(0, lambda c=completed, t=total_tasks: window_ref.update_progress(c, t))
+
+            self.after(0, lambda: window_ref.log(f"\n✨ 작업 완료! (성공: {success_count} / 전체: {total_tasks})"))
+            self.after(0, lambda: window_ref.btn_start.configure(state="normal", text="작업 완료"))
+
+        threading.Thread(target=run_executor, daemon=True).start()
 
 class MagnifierWindow(ctk.CTkToplevel):
     def __init__(self, parent):

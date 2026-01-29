@@ -611,3 +611,100 @@ class MagnifierWindow(ctk.CTkToplevel):
         # Update label
         self.label_info.configure(text=f"Position: ({cx}, {cy}) | Zoom: x{zoom_level}")
 
+class BatchExportWindow(ctk.CTkToplevel):
+    def __init__(self, parent, start_callback):
+        super().__init__(parent)
+        self.title("일괄 저장 설정 (Batch Export Settings)")
+        self.geometry("450x550")
+        self.resizable(False, False)
+        self.parent = parent
+        self.start_callback = start_callback
+        
+        self.transient(parent)
+        self.grab_set()
+
+        # Layout
+        ctk.CTkLabel(self, text="📦 일괄 저장 (Batch Export)", font=("Arial", 20, "bold")).pack(pady=20)
+
+        # Formats Section
+        format_frame = ctk.CTkFrame(self)
+        format_frame.pack(pady=10, padx=20, fill="x")
+        ctk.CTkLabel(format_frame, text="내보낼 포맷 선택:", font=("Arial", 12, "bold")).pack(pady=10, padx=10, anchor="w")
+        
+        self.format_vars = {
+            "PNG": ctk.BooleanVar(value=True),
+            "JPG": ctk.BooleanVar(value=False),
+            "BMP": ctk.BooleanVar(value=False),
+            "WEBP": ctk.BooleanVar(value=False)
+        }
+        
+        for fmt, var in self.format_vars.items():
+            ctk.CTkCheckBox(format_frame, text=fmt, variable=var).pack(side="left", padx=15, pady=10)
+
+        # Output Directory Section
+        dir_frame = ctk.CTkFrame(self)
+        dir_frame.pack(pady=10, padx=20, fill="x")
+        ctk.CTkLabel(dir_frame, text="저장 경로:", font=("Arial", 12, "bold")).pack(pady=5, padx=10, anchor="w")
+        
+        self.entry_dir = ctk.CTkEntry(dir_frame)
+        self.entry_dir.pack(side="left", fill="x", expand=True, padx=(10, 5), pady=10)
+        
+        self.btn_browse = ctk.CTkButton(dir_frame, text="찾기...", width=60, command=self.browse_dir)
+        self.btn_browse.pack(side="right", padx=(0, 10), pady=10)
+
+        # Progress Section
+        self.progress_label = ctk.CTkLabel(self, text="준비됨", font=("Arial", 12))
+        self.progress_label.pack(pady=(20, 5))
+        
+        self.progress_bar = ctk.CTkProgressBar(self, width=350)
+        self.progress_bar.set(0)
+        self.progress_bar.pack(pady=10)
+
+        # Log Area
+        self.log_text = ctk.CTkTextbox(self, height=120, font=("Consolas", 10))
+        self.log_text.pack(pady=10, padx=20, fill="x")
+
+        # Action Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(side="bottom", pady=20, fill="x")
+        
+        self.btn_start = ctk.CTkButton(btn_frame, text="🚀 작업 시작", command=self.on_start, 
+                                        fg_color="#2ecc71", hover_color="#27ae60", height=40, font=("Arial", 14, "bold"))
+        self.btn_start.pack(side="left", padx=20, expand=True)
+        
+        self.btn_close = ctk.CTkButton(btn_frame, text="닫기", command=self.destroy, width=100)
+        self.btn_close.pack(side="right", padx=20)
+
+    def browse_dir(self):
+        self.grab_release()
+        d = filedialog.askdirectory(parent=self)
+        self.grab_set()
+        if d:
+            self.entry_dir.delete(0, "end")
+            self.entry_dir.insert(0, d)
+
+    def on_start(self):
+        output_dir = self.entry_dir.get()
+        if not output_dir:
+            self.log("❌ 오류: 저장 경로를 선택하세요.")
+            return
+            
+        selected_formats = [fmt for fmt, var in self.format_vars.items() if var.get()]
+        if not selected_formats:
+            self.log("❌ 오류: 최소 하나의 포맷을 선택하세요.")
+            return
+
+        self.btn_start.configure(state="disabled")
+        self.start_callback(output_dir, selected_formats, self)
+
+    def log(self, message):
+        self.log_text.insert("end", message + "\n")
+        self.log_text.see("end")
+        self.update_idletasks()
+
+    def update_progress(self, current, total):
+        val = current / total
+        self.progress_bar.set(val)
+        self.progress_label.configure(text=f"진행 중: {current} / {total}")
+        self.update_idletasks()
+
