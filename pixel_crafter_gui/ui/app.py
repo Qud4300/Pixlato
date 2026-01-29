@@ -630,8 +630,42 @@ class PixelApp(ctk.CTk):
             "custom_colors": list(self.user_palette_colors_persistent) # Snapshot
         }
 
+    def validate_params(self, params):
+        """Validates and sanitizes parameter types and ranges."""
+        try:
+            # 1. Pixel Size (1-128)
+            if "pixel_size" in params:
+                params["pixel_size"] = max(1, min(128, int(params["pixel_size"])))
+            
+            # 2. Color Count (2-256)
+            if "color_count" in params:
+                params["color_count"] = max(2, min(256, int(params["color_count"])))
+            
+            # 3. Edge Sensitivity (0.0-10.0)
+            if "edge_sensitivity" in params:
+                params["edge_sensitivity"] = max(0.0, min(10.0, float(params["edge_sensitivity"])))
+            
+            # 4. Enums Validation
+            if "save_mode" in params and params["save_mode"] not in ["Style Only", "Pixelate"]:
+                params["save_mode"] = "Style Only"
+            
+            if "palette_mode" in params and params["palette_mode"] not in self.palette_values:
+                params["palette_mode"] = "Limited"
+                
+            if "downsample_method" in params and params["downsample_method"] not in self.downsample_methods:
+                params["downsample_method"] = "Standard"
+                
+            return params
+        except Exception as e:
+            print(f"Validation Error: {e}")
+            return None
+
     def restore_ui_state(self, params):
         """Restores UI parameters from a dictionary."""
+        if not params: return
+        
+        # Security: Validate input parameters before applying
+        params = self.validate_params(params)
         if not params: return
         
         # Block on_param_change from triggering multiple times
