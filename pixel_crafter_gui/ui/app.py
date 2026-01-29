@@ -981,6 +981,9 @@ class PixelApp(ctk.CTk):
         file_path = filedialog.asksaveasfilename(parent=self, defaultextension=def_ext, filetypes=filetypes)
         
         if file_path:
+            # Security: Normalize path
+            file_path = os.path.normpath(file_path)
+            
             # Check if saving as GIF
             if is_gif and file_path.lower().endswith('.gif'):
                 # Gather params for GIF processing
@@ -1186,9 +1189,11 @@ class PixelApp(ctk.CTk):
                 if ext in ["jpg", "bmp"]:
                     final = final.convert("RGB")
                 
-                # Save
-                filename = f"{img_entry['name']}_pixel.{ext}"
-                save_path = os.path.join(output_dir, filename)
+                # Security: Enforce basename to prevent path traversal via img_entry['name']
+                safe_name = os.path.basename(img_entry['name'])
+                filename = f"{safe_name}_pixel.{ext}"
+                save_path = os.path.join(os.path.normpath(output_dir), filename)
+                
                 final.save(save_path)
                 return True, f"✅ {filename} 저장 완료"
             except Exception as e:
