@@ -758,6 +758,10 @@ class PixelApp(ctk.CTk):
                 # Global mode: just process with current UI
                 self.process_inventory_image(img_entry["pil_image"])
 
+    def process_inventory_image(self, pil_image):
+        """Unified entry point for processing an image from inventory."""
+        self._start_threaded_process("pil", pil_image)
+
     def open_image(self):
         file_path = filedialog.askopenfilename(
             parent=self,
