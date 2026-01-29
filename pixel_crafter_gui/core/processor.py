@@ -1,6 +1,9 @@
 from PIL import Image, ImageFilter
 import numpy as np
 
+# Security: Prevent decompression bomb attacks by limiting max pixels (e.g., 100MP)
+Image.MAX_IMAGE_PIXELS = 100_000_000 
+
 def enhance_internal_edges(img, sensitivity=1.0):
     """
     Applies Unsharp Mask to enhance internal edges/details before downsampling.

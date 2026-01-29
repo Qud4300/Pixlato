@@ -1,6 +1,7 @@
 import customtkinter as ctk
-from tkinter import filedialog
-from PIL import Image, ImageTk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk, ImagePalette
+from PIL.Image import DecompressionBombError
 import os
 import sys
 import json
@@ -727,12 +728,17 @@ class PixelApp(ctk.CTk):
             filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")]
         )
         if file_path:
-            self.original_image_path = file_path
-            with Image.open(file_path) as img:
-                self.original_size = img.size
-            self.preview_zoom = -1 
-            self.process_image()
-            self.btn_save.configure(state="normal")
+            try:
+                self.original_image_path = file_path
+                with Image.open(file_path) as img:
+                    self.original_size = img.size
+                self.preview_zoom = -1 
+                self.process_image()
+                self.btn_save.configure(state="normal")
+            except DecompressionBombError:
+                messagebox.showerror("보안 경고", "이미지 해상도가 너무 커서 보안을 위해 처리를 중단했습니다.\n(Decompression Bomb detected)")
+            except Exception as e:
+                messagebox.showerror("오류", f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
 
     def process_image(self):
         """Unified entry point for processing original image path."""

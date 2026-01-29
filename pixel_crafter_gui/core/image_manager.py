@@ -3,6 +3,7 @@ Image Manager for handling multiple images in inventory.
 Supports GIF frame extraction and batch processing.
 """
 from PIL import Image, ImageSequence
+from PIL.Image import DecompressionBombError
 import os
 
 class ImageManager:
@@ -64,6 +65,8 @@ class ImageManager:
                 added_ids.append(self._next_id)
                 self._next_id += 1
                 
+        except DecompressionBombError:
+            print(f"Security: DecompressionBomb detected at {path}. Image too large.")
         except Exception as e:
             print(f"Error adding image: {e}")
             
