@@ -130,6 +130,14 @@ class PixelApp(ctk.CTk):
             
         self.logo_label.pack(pady=20, padx=20)
 
+        # Setting Mode Selection (Phase 19)
+        self.label_setting_mode = ctk.CTkLabel(self.sidebar, text="설정 모드 (Setting Mode):", anchor="w")
+        self.label_setting_mode.pack(pady=(10, 0), padx=20, fill="x")
+        self.setting_mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=["Global", "Individual"], command=self.on_setting_mode_change)
+        self.setting_mode_switch.set("Global")
+        self.setting_mode_switch.pack(pady=5, padx=20, fill="x")
+        ToolTip(self.label_setting_mode, text="Global: 하나의 설정을 모든 이미지에 동일하게 적용합니다.\nIndividual: 각 이미지마다 개별적인 설정값을 저장하고 복구합니다.")
+
         # Mode Selection
         self.label_mode = ctk.CTkLabel(self.sidebar, text="저장 모드 (Save Mode):", anchor="w")
         self.label_mode.pack(pady=(10, 0), padx=20, fill="x")
@@ -510,12 +518,123 @@ class PixelApp(ctk.CTk):
             self.slider_edge_sens.configure(state="disabled", progress_color="gray")
             self.label_edge_sens.configure(text_color="gray")
 
+    def on_setting_mode_change(self, value):
+        if value == "Individual" and self.current_inventory_id is not None:
+            # Capture current UI as the individual state for the selected image
+            entry = self.image_manager.get_image(self.current_inventory_id)
+            if entry and entry["params"] is None:
+                entry["params"] = self.capture_ui_state()
+        print(f"Setting Mode changed to: {value}")
+
+    def capture_ui_state(self):
+        """Captures all relevant UI parameters into a dictionary."""
+        return {
+            "save_mode": self.mode_switch.get(),
+            "pixel_size": int(self.slider_pixel.get()),
+            "color_count": int(self.color_slider.get()),
+            "palette_mode": self.option_palette.get(),
+            "dither": self.check_dither.get(),
+            "remove_bg": self.check_remove_bg.get(),
+            "outline": self.check_outline.get(),
+            "edge_enhance": self.check_edge_enhance.get(),
+            "edge_sensitivity": float(self.slider_edge_sens.get()),
+            "downsample_method": self.option_downsample.get(),
+            "custom_colors": list(self.user_palette_colors_persistent) # Snapshot
+        }
+
+    def restore_ui_state(self, params):
+        """Restores UI parameters from a dictionary."""
+        if not params: return
+        
+        # Block on_param_change from triggering multiple times
+        # We can do this by setting a flag or just letting it trigger once at the end.
+        # But some widgets like OptionMenu or SegmentedButton trigger command on .set() or manual select.
+        # CTK widgets usually don't trigger command on .set() but let's be careful.
+        
+        try:
+            if "save_mode" in params:
+                self.mode_switch.set(params["save_mode"])
+            
+            if "pixel_size" in params:
+                self.slider_pixel.set(params["pixel_size"])
+                self.pixel_spin.set(params["pixel_size"])
+                
+            if "color_count" in params:
+                self.color_slider.set(params["color_count"])
+                self.color_spinbox.set(params["color_count"])
+                
+            if "palette_mode" in params:
+                self.option_palette.set(params["palette_mode"])
+                self.on_palette_menu_change(params["palette_mode"])
+                
+            if "dither" in params:
+                if params["dither"]: self.check_dither.select()
+                else: self.check_dither.deselect()
+                
+            if "remove_bg" in params:
+                if params["remove_bg"]: self.check_remove_bg.select()
+                else: self.check_remove_bg.deselect()
+                
+            if "outline" in params:
+                if params["outline"]: self.check_outline.select()
+                else: self.check_outline.deselect()
+                
+            if "edge_enhance" in params:
+                if params["edge_enhance"]: self.check_edge_enhance.select()
+                else: self.check_edge_enhance.deselect()
+                self.update_edge_controls_state()
+                
+            if "edge_sensitivity" in params:
+                self.slider_edge_sens.set(params["edge_sensitivity"])
+                self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
+                
+            if "downsample_method" in params:
+                self.option_downsample.set(params["downsample_method"])
+                
+            if "custom_colors" in params:
+                self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
+                
+            # Trigger one final process
+            self.on_param_change()
+            
+        except Exception as e:
+            print(f"Error restoring UI state: {e}")
+
     def on_param_change(self, *args):
         if self.current_inventory_id is not None:
-            # Re-select to trigger processing on correct image
-            self.select_inventory_image(self.current_inventory_id)
+            # If in individual mode, save current UI state to the selected item
+            if self.setting_mode_switch.get() == "Individual":
+                entry = self.image_manager.get_image(self.current_inventory_id)
+                if entry:
+                    entry["params"] = self.capture_ui_state()
+            
+            # Re-select (or just process) to trigger processing on correct image
+            img_entry = self.image_manager.get_image(self.current_inventory_id)
+            if img_entry:
+                self.process_inventory_image(img_entry["pil_image"])
         elif self.original_image_path:
             self.process_image()
+
+    def select_inventory_image(self, image_id):
+        # If switching AWAY from an image in individual mode, we already saved on param change.
+        # But what if we just selected it and changed nothing?
+        # Actually, saving on every change is safer.
+        
+        self.current_inventory_id = image_id
+        img_entry = self.image_manager.get_image(image_id)
+        if img_entry:
+            # Handle Individual Setting Mode
+            if self.setting_mode_switch.get() == "Individual":
+                if img_entry["params"]:
+                    self.restore_ui_state(img_entry["params"])
+                else:
+                    # First time selecting this image in individual mode
+                    # Use current UI state as its starting point
+                    img_entry["params"] = self.capture_ui_state()
+                    self.process_inventory_image(img_entry["pil_image"])
+            else:
+                # Global mode: just process with current UI
+                self.process_inventory_image(img_entry["pil_image"])
 
     def open_image(self):
         file_path = filedialog.askopenfilename(
@@ -934,51 +1053,59 @@ class PixelApp(ctk.CTk):
         
         export_format = self.format_combo.get().lower()
         
-        # Gather current settings
-        pixel_size = int(self.slider_pixel.get())
-        dither = self.check_dither.get()
-        max_colors = int(self.color_slider.get())
-        edge_enhance = self.check_edge_enhance.get()
-        edge_sensitivity = float(self.slider_edge_sens.get())
-        outline_enabled = self.check_outline.get()
+        # Capture current Global settings as fallback
+        global_params = self.capture_ui_state()
+        setting_mode = self.setting_mode_switch.get()
         
-        palette_choice = self.option_palette.get()
-        if palette_choice == "USER CUSTOM":
-            palette_name = "Custom_User"
-            p_param = self.user_palette_colors_persistent
-        elif palette_choice == "16-bit (4096 Colors)":
-            palette_name = "Custom_16bit"
-            p_param = None
-        else:
-            palette_name = palette_choice
-            p_param = max_colors
-        
-        from core.processor import enhance_internal_edges
-        from core.palette import apply_palette
+        from core.processor import enhance_internal_edges, remove_background
+        from core.palette import apply_palette_unified
         
         count = 0
         for img_entry in self.image_manager.get_all():
             try:
+                # Determine which parameters to use
+                if setting_mode == "Individual" and img_entry["params"]:
+                    p = img_entry["params"]
+                else:
+                    p = global_params
+                
                 pil_img = img_entry["pil_image"].convert("RGBA")
                 
+                # BG Removal
+                if p.get("remove_bg", False):
+                    pil_img = remove_background(pil_img)
+
                 # Edge enhancement
-                if edge_enhance and edge_sensitivity > 0:
-                    pil_img = enhance_internal_edges(pil_img, edge_sensitivity)
+                if p.get("edge_enhance", False) and p.get("edge_sensitivity", 1.0) > 0:
+                    pil_img = enhance_internal_edges(pil_img, p["edge_sensitivity"])
                 
                 # Downsample
+                pixel_size = p.get("pixel_size", 8)
                 small_w = max(1, pil_img.size[0] // pixel_size)
                 small_h = max(1, pil_img.size[1] // pixel_size)
+                
+                # Note: Batch export currently uses BOX resize. 
+                # We could support K-Means here too if needed.
+                # For consistency with current batch_export logic, sticking to BOX but using params.
                 small_img = pil_img.resize((small_w, small_h), resample=Image.BOX)
                 
                 # Apply palette
-                processed = apply_palette(small_img, palette_name, custom_colors=p_param, dither=dither)
+                pal_choice = p.get("palette_mode", "Limited")
+                if pal_choice == "USER CUSTOM":
+                    p_name, p_param = "Custom_User", p.get("custom_colors")
+                elif pal_choice == "16-bit (4096 Colors)":
+                    p_name, p_param = "Custom_16bit", None
+                else:
+                    p_name, p_param = pal_choice, p.get("color_count", 16)
+                
+                processed = apply_palette_unified(small_img, p_name, custom_colors=p_param, dither=p.get("dither", True))
                 
                 # Outline
-                if outline_enabled:
+                if p.get("outline", False):
                     processed = add_outline(processed)
                 
-                # Upscale
-                final = processed.resize(pil_img.size, resample=Image.NEAREST)
+                # Upscale (always to original size for batch export)
+                final = processed.resize(img_entry["pil_image"].size, resample=Image.NEAREST)
                 
                 # Handle format-specific conversion
                 if export_format in ["jpg", "bmp"]:

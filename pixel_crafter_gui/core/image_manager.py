@@ -43,7 +43,8 @@ class ImageManager:
                         "path": path,
                         "name": f"{name_base}_{i}",
                         "pil_image": frame_copy,
-                        "thumbnail": self._create_thumbnail(frame_copy)
+                        "thumbnail": self._create_thumbnail(frame_copy),
+                        "params": None # For Phase 19 individual settings
                     }
                     self.images.append(entry)
                     added_ids.append(self._next_id)
@@ -56,7 +57,8 @@ class ImageManager:
                     "path": path,
                     "name": name_base,
                     "pil_image": img_rgba,
-                    "thumbnail": self._create_thumbnail(img_rgba)
+                    "thumbnail": self._create_thumbnail(img_rgba),
+                    "params": None # For Phase 19 individual settings
                 }
                 self.images.append(entry)
                 added_ids.append(self._next_id)
