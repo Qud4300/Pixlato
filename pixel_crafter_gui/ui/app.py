@@ -250,6 +250,12 @@ class PixelApp(ctk.CTk):
         self.btn_save_preset.pack(side="right")
         ToolTip(self.btn_save_preset, text="현재 설정을 새로운 프리셋으로 저장합니다.")
 
+        # Theme Section (New)
+        ctk.CTkLabel(self.param_frame, text="UI 테마 (Theme):", anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        self.option_theme = ctk.CTkOptionMenu(self.param_frame, values=self.theme_manager.get_available_themes(), command=self.change_theme)
+        self.option_theme.set("Default Dark")
+        self.option_theme.pack(pady=5, fill="x")
+
         # Magnifier Button (Saving space)
         # Magnifier Button (Saving space)
         self.btn_open_mag = ctk.CTkButton(self.param_frame, text="🔍 돋보기 열기", command=self.toggle_magnifier, fg_color="#d35400", hover_color="#e67e22")
