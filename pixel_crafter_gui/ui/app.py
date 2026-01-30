@@ -16,10 +16,19 @@ from core.gif_processor import process_gif
 from core.image_manager import ImageManager
 from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector, BatchExportWindow
 from ui.theme_manager import ThemeManager
+from ui.locale_manager import LocaleManager
 
 class PixelApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+
+        # Asset Paths
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        self.assets_dir = os.path.join(project_root, "assets")
+
+        # Localization Initialization
+        self.locale = LocaleManager(self.assets_dir, default_lang="ko")
 
         # Theme Initialization
         self.theme_manager = ThemeManager()
@@ -97,23 +106,23 @@ class PixelApp(ctk.CTk):
         self.navbar = ctk.CTkFrame(self, height=40, corner_radius=0)
         self.navbar.grid(row=0, column=0, columnspan=3, sticky="ew")
         
-        self.nav_label = ctk.CTkLabel(self.navbar, text="📁 팔레트 관리:", font=("Arial", 12, "bold"))
+        self.nav_label = ctk.CTkLabel(self.navbar, text=self.locale.get("nav_palette_mgmt"), font=("Arial", 12, "bold"))
         self.nav_label.pack(side="left", padx=20)
         
-        self.btn_load_pal = ctk.CTkButton(self.navbar, text="불러오기 (Load)", width=100, height=28, fg_color="#34495e", command=self.load_palette_file)
+        self.btn_load_pal = ctk.CTkButton(self.navbar, text=self.locale.get("nav_load"), width=100, height=28, fg_color="#34495e", command=self.load_palette_file)
         self.btn_load_pal.pack(side="left", padx=5)
         
-        self.btn_save_pal = ctk.CTkButton(self.navbar, text="다른 이름으로 저장 (Save As)", width=160, height=28, fg_color="#34495e", command=self.save_palette_file)
+        self.btn_save_pal = ctk.CTkButton(self.navbar, text=self.locale.get("nav_save_as"), width=160, height=28, fg_color="#34495e", command=self.save_palette_file)
         self.btn_save_pal.pack(side="left", padx=5)
 
         # --- Project Management ---
-        self.proj_label = ctk.CTkLabel(self.navbar, text="💾 프로젝트:", font=("Arial", 12, "bold"))
+        self.proj_label = ctk.CTkLabel(self.navbar, text=self.locale.get("nav_project"), font=("Arial", 12, "bold"))
         self.proj_label.pack(side="left", padx=(30, 10))
 
-        self.btn_load_proj = ctk.CTkButton(self.navbar, text="불러오기 (Open .pcp)", width=140, height=28, fg_color="#2c3e50", command=self.load_project_file)
+        self.btn_load_proj = ctk.CTkButton(self.navbar, text=self.locale.get("nav_open_pcp"), width=140, height=28, fg_color="#2c3e50", command=self.load_project_file)
         self.btn_load_proj.pack(side="left", padx=5)
 
-        self.btn_save_proj = ctk.CTkButton(self.navbar, text="저장 (Save .pcp)", width=120, height=28, fg_color="#2c3e50", command=self.save_project_file)
+        self.btn_save_proj = ctk.CTkButton(self.navbar, text=self.locale.get("nav_save_pcp"), width=120, height=28, fg_color="#2c3e50", command=self.save_project_file)
         self.btn_save_proj.pack(side="left", padx=5)
 
         # --- Sidebar (Scrollable) ---
@@ -125,7 +134,7 @@ class PixelApp(ctk.CTk):
         self.logo_label.pack(pady=20, padx=20)
 
         # Setting Mode Selection (Phase 19)
-        self.label_setting_mode = ctk.CTkLabel(self.sidebar, text="설정 모드 (Setting Mode):", anchor="w")
+        self.label_setting_mode = ctk.CTkLabel(self.sidebar, text=self.locale.get("sidebar_setting_mode"), anchor="w")
         self.label_setting_mode.pack(pady=(10, 0), padx=20, fill="x")
         self.setting_mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=["Global", "Individual"], command=self.on_setting_mode_change)
         self.setting_mode_switch.set("Global")
@@ -133,7 +142,7 @@ class PixelApp(ctk.CTk):
         ToolTip(self.label_setting_mode, text="Global: 하나의 설정을 모든 이미지에 동일하게 적용합니다.\nIndividual: 각 이미지마다 개별적인 설정값을 저장하고 복구합니다.")
 
         # Mode Selection
-        self.label_mode = ctk.CTkLabel(self.sidebar, text="저장 모드 (Save Mode):", anchor="w")
+        self.label_mode = ctk.CTkLabel(self.sidebar, text=self.locale.get("sidebar_save_mode"), anchor="w")
         self.label_mode.pack(pady=(10, 0), padx=20, fill="x")
         self.mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=["Style Only", "Pixelate"], command=self.on_param_change)
         self.mode_switch.set("Style Only")
@@ -149,7 +158,7 @@ class PixelApp(ctk.CTk):
         # Pixel Size Section (Compact)
         pixel_header = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         pixel_header.pack(fill="x", pady=(10, 0))
-        self.label_pixel = ctk.CTkLabel(pixel_header, text="Pixel Size:", anchor="w", width=80)
+        self.label_pixel = ctk.CTkLabel(pixel_header, text=self.locale.get("sidebar_pixel_size"), anchor="w", width=80)
         self.label_pixel.pack(side="left")
         self.pixel_spin = IntSpinbox(pixel_header, from_=1, to=128, width=100, command=self.update_pixel_from_spinbox)
         self.pixel_spin.pack(side="right")
@@ -165,7 +174,7 @@ class PixelApp(ctk.CTk):
         
         color_header = ctk.CTkFrame(self.color_limit_group, fg_color="transparent")
         color_header.pack(fill="x", pady=(5, 0))
-        self.label_color_count = ctk.CTkLabel(color_header, text="색상 제한:", anchor="w", width=80)
+        self.label_color_count = ctk.CTkLabel(color_header, text=self.locale.get("sidebar_color_limit"), anchor="w", width=80)
         self.label_color_count.pack(side="left")
         self.color_spinbox = IntSpinbox(color_header, from_=2, to=256, width=100, command=self.update_color_from_spinbox)
         self.color_spinbox.pack(side="right")
@@ -176,35 +185,35 @@ class PixelApp(ctk.CTk):
         self.color_slider.pack(pady=(2, 5), fill="x")
 
         # Palette Section
-        ctk.CTkLabel(self.param_frame, text="팔레트 프리셋:", anchor="w").pack(pady=(5, 0), fill="x")
+        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_palette_preset"), anchor="w").pack(pady=(5, 0), fill="x")
         self.palette_values = ["Limited", "Original", "Grayscale", "GameBoy", "CGA", "Pico-8", "16-bit (4096 Colors)", "USER CUSTOM"]
         self.option_palette = ctk.CTkOptionMenu(self.param_frame, values=self.palette_values, command=self.on_palette_menu_change)
         self.option_palette.set("Limited")
         self.option_palette.pack(pady=5, fill="x")
 
-        self.btn_custom_pal = ctk.CTkButton(self.param_frame, text="🎨 커스텀 팔레트 편집", command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
+        self.btn_custom_pal = ctk.CTkButton(self.param_frame, text=self.locale.get("sidebar_edit_custom_pal"), command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
         self.btn_custom_pal.pack(pady=5, fill="x")
 
-        self.check_dither = ctk.CTkCheckBox(self.param_frame, text="디더링 (Dithering)", command=self.on_param_change)
+        self.check_dither = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_dithering"), command=self.on_param_change)
         self.check_dither.select()
         self.check_dither.pack(pady=5, fill="x")
 
         # Visual Effects Section
-        ctk.CTkLabel(self.param_frame, text="비주얼 효과:", anchor="w", font=("Arial", 12, "bold")).pack(pady=(10, 0), fill="x")
+        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_visual_effects"), anchor="w", font=("Arial", 12, "bold")).pack(pady=(10, 0), fill="x")
         
-        self.check_remove_bg = ctk.CTkCheckBox(self.param_frame, text="배경 제거 (Remove BG)", command=self.on_param_change)
+        self.check_remove_bg = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_remove_bg"), command=self.on_param_change)
         self.check_remove_bg.pack(pady=5, fill="x")
         ToolTip(self.check_remove_bg, text="이미지의 모서리 색상을 감지하여 배경을 투명하게 만듭니다.")
 
-        self.check_outline = ctk.CTkCheckBox(self.param_frame, text="외곽선 추가 (Outline)", command=self.on_param_change)
+        self.check_outline = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_outline"), command=self.on_param_change)
         self.check_outline.pack(pady=5, fill="x")
 
-        self.check_edge_enhance = ctk.CTkCheckBox(self.param_frame, text="내부 엣지 강조 (Edge)", command=self.on_edge_enhance_toggle)
+        self.check_edge_enhance = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_edge_enhance"), command=self.on_edge_enhance_toggle)
         self.check_edge_enhance.pack(pady=5, fill="x")
         
         edge_header = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         edge_header.pack(fill="x")
-        ctk.CTkLabel(edge_header, text="엣지 강도:", anchor="w").pack(side="left")
+        ctk.CTkLabel(edge_header, text=self.locale.get("sidebar_edge_sens"), anchor="w").pack(side="left")
         self.label_edge_sens = ctk.CTkLabel(edge_header, text="1.0", width=40, anchor="e")
         self.label_edge_sens.pack(side="right")
         
@@ -216,14 +225,14 @@ class PixelApp(ctk.CTk):
         self.update_edge_controls_state()
 
         # Downsampling Method Section
-        ctk.CTkLabel(self.param_frame, text="다운샘플링 정책:", anchor="w").pack(pady=(5, 0), fill="x")
+        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_downsample"), anchor="w").pack(pady=(5, 0), fill="x")
         self.downsample_methods = ["Standard", "K-Means"]
         self.option_downsample = ctk.CTkOptionMenu(self.param_frame, values=self.downsample_methods, command=self.on_param_change)
         self.option_downsample.set("Standard")
         self.option_downsample.pack(pady=5, fill="x")
 
         # Preset Section (New)
-        ctk.CTkLabel(self.param_frame, text="필터 프리셋 (Presets):", anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_presets"), anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
         preset_frame = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         preset_frame.pack(fill="x", pady=5)
         
@@ -236,14 +245,20 @@ class PixelApp(ctk.CTk):
         ToolTip(self.btn_save_preset, text="현재 설정을 새로운 프리셋으로 저장합니다.")
 
         # Theme Section (New)
-        ctk.CTkLabel(self.param_frame, text="UI 테마 (Theme):", anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_theme"), anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
         self.option_theme = ctk.CTkOptionMenu(self.param_frame, values=self.theme_manager.get_available_themes(), command=self.change_theme)
         self.option_theme.set("Default Dark")
         self.option_theme.pack(pady=5, fill="x")
 
+        # Language Section (New)
+        ctk.CTkLabel(self.param_frame, text="Language:", anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        self.option_lang = ctk.CTkOptionMenu(self.param_frame, values=self.locale.get_available_languages(), command=self.change_language)
+        self.option_lang.set(self.locale.current_lang)
+        self.option_lang.pack(pady=5, fill="x")
+
         # Magnifier Button (Saving space)
         # Magnifier Button (Saving space)
-        self.btn_open_mag = ctk.CTkButton(self.param_frame, text="🔍 돋보기 열기", command=self.toggle_magnifier, fg_color="#d35400", hover_color="#e67e22")
+        self.btn_open_mag = ctk.CTkButton(self.param_frame, text=self.locale.get("sidebar_open_mag"), command=self.toggle_magnifier, fg_color="#d35400", hover_color="#e67e22")
         self.btn_open_mag.pack(pady=10, fill="x")
         self.mag_window = None
 
@@ -257,7 +272,7 @@ class PixelApp(ctk.CTk):
 
         # Save Section
         # Save Section
-        self.btn_save = ctk.CTkButton(self.sidebar, text="이미지 저장 (Export Image)", command=self.save_image, state="disabled", fg_color="#2ecc71", hover_color="#27ae60", height=45, font=("Arial", 16, "bold"))
+        self.btn_save = ctk.CTkButton(self.sidebar, text=self.locale.get("sidebar_export"), command=self.save_image, state="disabled", fg_color="#2ecc71", hover_color="#27ae60", height=45, font=("Arial", 16, "bold"))
         self.btn_save.pack(side="bottom", pady=(5, 20), padx=20, fill="x")
         
         # Tooltip for Save Button
@@ -278,6 +293,7 @@ class PixelApp(ctk.CTk):
         # Palette Inspector Overlay (Over the canvas, doesn't shift layout)
         # We use place to ensure it doesn't trigger parent resize or shifting
         self.palette_inspector = PaletteInspector(self.preview_frame, width=300, height=28, 
+                                                 click_callback=self.on_palette_color_click,
                                                  corner_radius=6, border_width=1, border_color="#444")
         self.palette_inspector.place(relx=0.0, rely=0.0, x=15, y=15, anchor="nw")
 
@@ -302,10 +318,10 @@ class PixelApp(ctk.CTk):
         self.inventory_frame.grid_propagate(False)
         
         # Load Image Button (at top of inventory)
-        self.btn_add_to_inv = ctk.CTkButton(self.inventory_frame, text="📂 이미지 추가", command=self.add_image_to_inventory, height=35, fg_color="#27ae60")
+        self.btn_add_to_inv = ctk.CTkButton(self.inventory_frame, text=self.locale.get("inv_add"), command=self.add_image_to_inventory, height=35, fg_color="#27ae60")
         self.btn_add_to_inv.pack(pady=10, padx=10, fill="x")
         
-        self.label_inv_header = ctk.CTkLabel(self.inventory_frame, text="인벤토리 (0/256)", font=("Arial", 11))
+        self.label_inv_header = ctk.CTkLabel(self.inventory_frame, text=f"{self.locale.get('inv_title')} (0/256)", font=("Arial", 11))
         self.label_inv_header.pack(pady=(5, 0))
         
         # Scrollable list for inventory items
@@ -313,13 +329,13 @@ class PixelApp(ctk.CTk):
         self.inventory_scroll.pack(fill="both", expand=True, padx=5, pady=5)
         
         # Format selection for export
-        ctk.CTkLabel(self.inventory_frame, text="저장 포맷:", anchor="w").pack(pady=(5, 0), padx=10, fill="x")
+        ctk.CTkLabel(self.inventory_frame, text=self.locale.get("inv_format"), anchor="w").pack(pady=(5, 0), padx=10, fill="x")
         self.format_combo = ctk.CTkOptionMenu(self.inventory_frame, values=["PNG", "JPG", "BMP", "WEBP"])
         self.format_combo.set("PNG")
         self.format_combo.pack(pady=5, padx=10, fill="x")
         
         # Batch Export Button
-        self.btn_batch_export = ctk.CTkButton(self.inventory_frame, text="일괄 저장 (Save All)", command=self.batch_export, height=35, fg_color="#3498db")
+        self.btn_batch_export = ctk.CTkButton(self.inventory_frame, text=self.locale.get("inv_save_all"), command=self.batch_export, height=35, fg_color="#3498db")
         self.btn_batch_export.pack(pady=10, padx=10, fill="x", side="bottom")
 
     def load_presets(self):
@@ -343,6 +359,63 @@ class PixelApp(ctk.CTk):
         accent = self.theme_manager.get_preset_accent(theme_name)
         self.change_accent_color(accent)
         print(f"Theme changed to: {theme_name} ({accent})")
+
+    def change_language(self, lang_code):
+        """Changes the UI language and updates all labels."""
+        if self.locale.load_language(lang_code):
+            print(f"Language changed to: {lang_code}")
+            self.update_ui_text()
+
+    def update_ui_text(self):
+        """Updates all UI components with the current locale strings."""
+        self.nav_label.configure(text=self.locale.get("nav_palette_mgmt"))
+        self.btn_load_pal.configure(text=self.locale.get("nav_load"))
+        self.btn_save_pal.configure(text=self.locale.get("nav_save_as"))
+        self.proj_label.configure(text=self.locale.get("nav_project"))
+        self.btn_load_proj.configure(text=self.locale.get("nav_open_pcp"))
+        self.btn_save_proj.configure(text=self.locale.get("nav_save_pcp"))
+        
+        self.label_setting_mode.configure(text=self.locale.get("sidebar_setting_mode"))
+        self.label_mode.configure(text=self.locale.get("sidebar_save_mode"))
+        self.label_pixel.configure(text=self.locale.get("sidebar_pixel_size"))
+        self.label_color_count.configure(text=self.locale.get("sidebar_color_limit"))
+        
+        # We also need to update the parent labels of param sections
+        for widget in self.param_frame.winfo_children():
+            if isinstance(widget, ctk.CTkLabel):
+                txt = widget.cget("text")
+                if "팔레트 프리셋" in txt or "Palette Preset" in txt:
+                    widget.configure(text=self.locale.get("sidebar_palette_preset"))
+                elif "비주얼 효과" in txt or "Visual Effects" in txt:
+                    widget.configure(text=self.locale.get("sidebar_visual_effects"))
+                elif "다운샘플링" in txt or "Downsampling" in txt:
+                    widget.configure(text=self.locale.get("sidebar_downsample"))
+                elif "필터 프리셋" in txt or "Filter Presets" in txt:
+                    widget.configure(text=self.locale.get("sidebar_presets"))
+                elif "UI 테마" in txt or "UI Theme" in txt:
+                    widget.configure(text=self.locale.get("sidebar_theme"))
+
+        self.btn_custom_pal.configure(text=self.locale.get("sidebar_edit_custom_pal"))
+        self.check_dither.configure(text=self.locale.get("sidebar_dithering"))
+        self.check_remove_bg.configure(text=self.locale.get("sidebar_remove_bg"))
+        self.check_outline.configure(text=self.locale.get("sidebar_outline"))
+        self.check_edge_enhance.configure(text=self.locale.get("sidebar_edge_enhance"))
+        
+        # To avoid re-searching, we should have kept references to these labels
+        # but the above loop handles it for generic labels.
+        
+        self.btn_open_mag.configure(text=self.locale.get("sidebar_open_mag"))
+        self.btn_save.configure(text=self.locale.get("sidebar_export"))
+        
+        self.btn_add_to_inv.configure(text=self.locale.get("inv_add"))
+        self.update_inventory_count_label()
+        
+        # Update format label
+        for widget in self.inventory_frame.winfo_children():
+            if isinstance(widget, ctk.CTkLabel) and ("저장 포맷" in widget.cget("text") or "Format" in widget.cget("text")):
+                widget.configure(text=self.locale.get("inv_format"))
+
+        self.btn_batch_export.configure(text=self.locale.get("inv_save_all"))
 
     def change_accent_color(self, hex_color):
         """Updates the accent color of key UI components."""
@@ -522,9 +595,27 @@ class PixelApp(ctk.CTk):
             self.active_palette_mode = "Standard"
             self.on_param_change()
 
-    def open_custom_palette(self):
+    def on_palette_color_click(self, index, color):
+        """Called when a color in the inspector is clicked."""
+        print(f"Inspector color clicked: Index {index}, Color {color}")
+        # Automatically open custom palette editor with this index selected
+        # We use current inspector colors as the base for custom palette
+        self.open_custom_palette(initial_index=index)
+
+    def open_custom_palette(self, initial_index=0):
         # Pass current inspector colors as initial if available
-        CustomPaletteWindow(self, self.on_custom_palette_applied, initial_colors=self.palette_inspector.colors)
+        # Ensure we always have a valid list of colors
+        current_colors = self.palette_inspector.colors if self.palette_inspector.colors else self.user_palette_colors_persistent
+        CustomPaletteWindow(self, self.on_custom_palette_applied, initial_colors=current_colors, initial_index=initial_index, live_callback=self.on_live_palette_update)
+
+    def on_live_palette_update(self, colors):
+        """Called for real-time preview during palette editing."""
+        if colors:
+            self.user_palette_colors_persistent[:len(colors)] = colors
+            self.active_palette_mode = "Custom_User"
+            # We don't change the OptionMenu to "USER CUSTOM" yet to avoid UI flicker,
+            # but we force the processing logic to use the updated custom colors.
+            self.on_param_change()
 
     def on_custom_palette_applied(self, mode, colors):
         if colors:
@@ -778,7 +869,7 @@ class PixelApp(ctk.CTk):
             return
             
         self._is_processing = True
-        self.status_label.configure(text="⏳ 처리 중 (Processing)...")
+        self.status_label.configure(text=self.locale.get("status_processing"))
         self.btn_save.configure(state="disabled")
 
         # Capture parameters in UI thread
@@ -1081,8 +1172,8 @@ class PixelApp(ctk.CTk):
     def update_inventory_count_label(self):
         # Update count label
         for widget in self.inventory_frame.winfo_children():
-            if isinstance(widget, ctk.CTkLabel) and "인벤토리" in widget.cget("text"):
-                widget.configure(text=f"인벤토리 ({self.image_manager.count()}/256)")
+            if isinstance(widget, ctk.CTkLabel) and (self.locale.get("inv_title") in widget.cget("text") or "인벤토리" in widget.cget("text")):
+                widget.configure(text=f"{self.locale.get('inv_title')} ({self.image_manager.count()}/256)")
                 break
 
     def refresh_inventory_ui(self):

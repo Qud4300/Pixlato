@@ -121,12 +121,29 @@ class PaletteInspector(ctk.CTkFrame):
     """
     A widget to visualize a list of colors (RGB tuples).
     """
-    def __init__(self, parent, width=200, height=30, **kwargs):
+    def __init__(self, parent, width=200, height=30, click_callback=None, **kwargs):
         super().__init__(parent, width=width, height=height, **kwargs)
         self.pack_propagate(False) # Prevent size changes based on content
-        self.canvas = ctk.CTkCanvas(self, width=width, height=height, highlightthickness=0, bg="#2b2b2b")
+        self.canvas = ctk.CTkCanvas(self, width=width, height=height, highlightthickness=0, bg="#2b2b2b", cursor="hand2")
         self.canvas.pack(fill="both", expand=True)
         self.colors = []
+        self.click_callback = click_callback
+        self.canvas.bind("<Button-1>", self.on_click)
+
+    def on_click(self, event):
+        if not self.colors or not self.click_callback:
+            return
+        
+        w = self.canvas.winfo_width()
+        display_colors = self.colors[:16]
+        count = len(display_colors)
+        if count == 0: return
+
+        slot_w = w / count
+        index = int(event.x // slot_w)
+        
+        if 0 <= index < count:
+            self.click_callback(index, self.colors[index])
 
     def update_colors(self, colors):
         """
@@ -165,13 +182,14 @@ from PIL import Image, ImageDraw, ImageTk
 import colorsys
 
 class CustomPaletteWindow(ctk.CTkToplevel):
-    def __init__(self, parent, current_callback, initial_colors=None):
+    def __init__(self, parent, current_callback, initial_colors=None, initial_index=0, live_callback=None):
         super().__init__(parent)
         self.title("커스텀 팔레트 설정 (Custom Palette)")
         self.geometry("820x720") 
         self.resizable(False, False)
         self.parent = parent
         self.current_callback = current_callback
+        self.live_callback = live_callback
         
         # Modal behavior
         self.transient(parent)
@@ -186,7 +204,7 @@ class CustomPaletteWindow(ctk.CTkToplevel):
             self.persistent_colors = [(0, 0, 0)] * 16
         
         self.bit_mode = ctk.StringVar(value="4bit")
-        self.current_slot_index = 0
+        self.current_slot_index = initial_index
         self.current_h = 0.0
         self.current_s = 1.0
         self.current_v = 1.0
@@ -468,6 +486,10 @@ class CustomPaletteWindow(ctk.CTkToplevel):
         self.persistent_colors[self.current_slot_index] = rgb
         self.slots[self.current_slot_index].configure(fg_color=hex_color)
         
+        # Live Update
+        if self.live_callback:
+            self.live_callback(self.persistent_colors[:16])
+
         # Auto-advance
         if self.current_slot_index < len(self.slots) - 1:
             self.select_slot(self.current_slot_index + 1)
@@ -539,6 +561,10 @@ class CustomPaletteWindow(ctk.CTkToplevel):
 
         # Refresh UI
         self.init_slots()
+        
+        # Live Update
+        if self.live_callback:
+            self.live_callback(self.persistent_colors[:16])
 
 class MagnifierWindow(ctk.CTkToplevel):
     """
