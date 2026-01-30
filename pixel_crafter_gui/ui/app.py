@@ -14,39 +14,32 @@ from core.palette import apply_palette_unified
 from core.project_manager import ProjectManager
 from core.gif_processor import process_gif
 from core.image_manager import ImageManager
-from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector, BatchExportWindow
+from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector, BatchExportWindow, PluginWindow
 from ui.theme_manager import ThemeManager
 from ui.locale_manager import LocaleManager
+from core.plugin_engine import PluginEngine
 
 class PixelApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # Asset Paths
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # --- Initialization ---
+        current_dir = os.path.dirname(os.path.abspath(__file__))  
         project_root = os.path.dirname(current_dir)
         self.assets_dir = os.path.join(project_root, "assets")
+        self.logo_path = os.path.join(self.assets_dir, "logo.png")
+        self.ico_path = os.path.join(self.assets_dir, "logo.ico")
 
-        # Localization Initialization
         self.locale = LocaleManager(self.assets_dir, default_lang="ko")
-
-        # Theme Initialization
         self.theme_manager = ThemeManager()
+        self.plugin_engine = PluginEngine(os.path.join(project_root, "plugins"))
+        self.plugin_engine.discover_plugins()
         
         # Window Setup
         self.title("Pixlato - Pixel Art Studio")
         self.geometry("1400x1000")
         self.resizable(True, True)
-        
-        # Minimum size to ensure layout doesn't collapse
         self.minsize(1000, 700)
-
-        # Asset Paths
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(current_dir)
-        self.assets_dir = os.path.join(project_root, "assets")
-        self.logo_path = os.path.join(self.assets_dir, "logo.png")
-        self.ico_path = os.path.join(self.assets_dir, "logo.ico")
 
         # Set App Icon
         try:
@@ -58,404 +51,314 @@ class PixelApp(ctk.CTk):
         except Exception as e:
             print(f"Failed to set app icon: {e}")
 
-        # Ensure directory exists
-        self.palette_dir = "palettes"
-        if not os.path.exists(self.palette_dir):
-            os.makedirs(self.palette_dir)
-        self.last_palette_dir = self.palette_dir
-
         # State
+        self.palette_dir = "palettes"
+        if not os.path.exists(self.palette_dir): os.makedirs(self.palette_dir)
+        self.last_palette_dir = self.palette_dir
         self.original_image_path = None
         self.original_size = (0, 0)
         self.raw_pixel_image = None   
         self.preview_image = None     
         self.mag_zoom = 3
-        
-        # State for Custom Palettes
         self.user_palette_colors_persistent = [(0,0,0)] * 16 
         self.active_palette_mode = "Standard" 
-        
-        # Load Existing Palette if available
-        self.load_default_palette()
-        
-        # State for Preview Zoom
         self.preview_zoom = 1.0 
-        
-        # Image Manager for batch processing
         self.image_manager = ImageManager()
-        self.current_inventory_id = None  # Currently selected image in inventory
-        self.inventory_widgets = {}  # image_id -> item_frame
-        
-        # Load Presets
+        self.current_inventory_id = None
+        self.inventory_widgets = {}
         self.presets_path = os.path.join(project_root, "palettes", "presets.json")
         self.presets = {}
-        self.load_presets()
-        
-        # Threading & Processing State
         self._is_processing = False
         self._pending_reprocess = False
-        self._last_processed_source = None # Stores whether we are processing original or inventory
-        
-        # Layout Config (3 columns: sidebar, preview, inventory)
-        self.grid_columnconfigure(0, weight=0, minsize=320)  # Fixed sidebar width
-        self.grid_columnconfigure(1, weight=1)  # Preview (expandable)
-        self.grid_columnconfigure(2, weight=0, minsize=180)  # Fixed inventory width
-        self.grid_rowconfigure(1, weight=1) # Row 0 is Navbar, Row 1 is Content
 
-        # --- Top Navigation Bar ---
+        self.load_default_palette()
+        self.load_presets()
+        
+        # --- Layout Configuration ---
+        self.grid_columnconfigure(0, weight=0, minsize=320)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(2, weight=0, minsize=180)
+        self.grid_rowconfigure(1, weight=1)
+
+        # 1. Top Navigation Bar
         self.navbar = ctk.CTkFrame(self, height=40, corner_radius=0)
         self.navbar.grid(row=0, column=0, columnspan=3, sticky="ew")
         
-        self.nav_label = ctk.CTkLabel(self.navbar, text=self.locale.get("nav_palette_mgmt"), font=("Arial", 12, "bold"))
+        self.nav_label = ctk.CTkLabel(self.navbar, text="", font=("Arial", 12, "bold"))
         self.nav_label.pack(side="left", padx=20)
-        
-        self.btn_load_pal = ctk.CTkButton(self.navbar, text=self.locale.get("nav_load"), width=100, height=28, fg_color="#34495e", command=self.load_palette_file)
+        self.locale.register(self.nav_label, "nav_palette_mgmt")
+
+        self.btn_load_pal = ctk.CTkButton(self.navbar, text="", width=80, height=28, command=self.load_palette_file)
         self.btn_load_pal.pack(side="left", padx=5)
-        
-        self.btn_save_pal = ctk.CTkButton(self.navbar, text=self.locale.get("nav_save_as"), width=160, height=28, fg_color="#34495e", command=self.save_palette_file)
+        self.locale.register(self.btn_load_pal, "nav_load")
+        self.theme_manager.register_widget(self.btn_load_pal)
+
+        self.btn_save_pal = ctk.CTkButton(self.navbar, text="", width=120, height=28, command=self.save_palette_file)
         self.btn_save_pal.pack(side="left", padx=5)
+        self.locale.register(self.btn_save_pal, "nav_save_as")
+        self.theme_manager.register_widget(self.btn_save_pal)
 
-        # --- Project Management ---
-        self.proj_label = ctk.CTkLabel(self.navbar, text=self.locale.get("nav_project"), font=("Arial", 12, "bold"))
+        self.proj_label = ctk.CTkLabel(self.navbar, text="", font=("Arial", 12, "bold"))
         self.proj_label.pack(side="left", padx=(30, 10))
+        self.locale.register(self.proj_label, "nav_project")
 
-        self.btn_load_proj = ctk.CTkButton(self.navbar, text=self.locale.get("nav_open_pcp"), width=140, height=28, fg_color="#2c3e50", command=self.load_project_file)
+        self.btn_load_proj = ctk.CTkButton(self.navbar, text="", width=120, height=28, command=self.load_project_file)
         self.btn_load_proj.pack(side="left", padx=5)
+        self.locale.register(self.btn_load_proj, "nav_open_pcp")
+        self.theme_manager.register_widget(self.btn_load_proj)
 
-        self.btn_save_proj = ctk.CTkButton(self.navbar, text=self.locale.get("nav_save_pcp"), width=120, height=28, fg_color="#2c3e50", command=self.save_project_file)
+        self.btn_save_proj = ctk.CTkButton(self.navbar, text="", width=100, height=28, command=self.save_project_file)
         self.btn_save_proj.pack(side="left", padx=5)
+        self.locale.register(self.btn_save_proj, "nav_save_pcp")
+        self.theme_manager.register_widget(self.btn_save_proj)
 
-        # --- Sidebar (Scrollable) ---
-        self.sidebar = ctk.CTkScrollableFrame(self, width=320, corner_radius=0)
+        self.option_lang = ctk.CTkOptionMenu(self.navbar, width=80, height=28, values=self.locale.get_available_languages(), command=self.change_language)
+        self.option_lang.set(self.locale.current_lang)
+        self.option_lang.pack(side="right", padx=20)
+        self.theme_manager.register_widget(self.option_lang)
+
+        # 2. Sidebar
+        self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
         self.sidebar.grid(row=1, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
         
-        # App Title instead of Logo
         self.logo_label = ctk.CTkLabel(self.sidebar, text="Pixlato ✨", font=ctk.CTkFont(size=28, weight="bold"))
-        self.logo_label.pack(pady=20, padx=20)
+        self.logo_label.pack(pady=(20, 10), padx=20)
 
-        # Setting Mode Selection (Phase 19)
-        self.label_setting_mode = ctk.CTkLabel(self.sidebar, text=self.locale.get("sidebar_setting_mode"), anchor="w")
-        self.label_setting_mode.pack(pady=(10, 0), padx=20, fill="x")
+        self.label_setting_mode = ctk.CTkLabel(self.sidebar, text="", anchor="w")
+        self.label_setting_mode.pack(pady=(5, 0), padx=20, fill="x")
+        self.locale.register(self.label_setting_mode, "sidebar_setting_mode")
+
         self.setting_mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=["Global", "Individual"], command=self.on_setting_mode_change)
         self.setting_mode_switch.set("Global")
         self.setting_mode_switch.pack(pady=5, padx=20, fill="x")
-        ToolTip(self.label_setting_mode, text="Global: 하나의 설정을 모든 이미지에 동일하게 적용합니다.\nIndividual: 각 이미지마다 개별적인 설정값을 저장하고 복구합니다.")
+        self.theme_manager.register_widget(self.setting_mode_switch)
 
-        # Mode Selection
-        self.label_mode = ctk.CTkLabel(self.sidebar, text=self.locale.get("sidebar_save_mode"), anchor="w")
-        self.label_mode.pack(pady=(10, 0), padx=20, fill="x")
-        self.mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=["Style Only", "Pixelate"], command=self.on_param_change)
+        # Fixed Bottom Sidebar Area
+        self.bottom_action_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.bottom_action_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+
+        self.btn_open_mag = ctk.CTkButton(self.bottom_action_frame, text="", command=self.toggle_magnifier, fg_color="#d35400", hover_color="#e67e22")
+        self.btn_open_mag.pack(pady=5, fill="x")
+        self.locale.register(self.btn_open_mag, "sidebar_open_mag")
+        self.mag_window = None
+
+        self.btn_plugin_mgr = ctk.CTkButton(self.bottom_action_frame, text="", command=self.open_plugin_manager, fg_color="#16a085", hover_color="#1abc9c")
+        self.btn_plugin_mgr.pack(pady=5, fill="x")
+        self.locale.register(self.btn_plugin_mgr, "sidebar_plugin_mgr", prefix="🔌 ")
+
+        self.btn_save = ctk.CTkButton(self.bottom_action_frame, text="", command=self.save_image, state="disabled", height=45, font=("Arial", 16, "bold"))
+        self.btn_save.pack(pady=5, fill="x")
+        self.locale.register(self.btn_save, "sidebar_export")
+        self.theme_manager.register_widget(self.btn_save, role="success")
+
+        self.status_container = ctk.CTkFrame(self.sidebar, height=30, fg_color="transparent")
+        self.status_container.pack(side="bottom", pady=0, fill="x")
+        self.status_container.pack_propagate(False)
+        self.status_label = ctk.CTkLabel(self.status_container, text="", text_color="#2ecc71")
+        self.status_label.pack(expand=True)
+
+        # Scrollable Params Area
+        self.scroll_sidebar = ctk.CTkScrollableFrame(self.sidebar, width=300, corner_radius=0, fg_color="transparent")
+        self.scroll_sidebar.pack(side="top", fill="both", expand=True, padx=5, pady=5)
+
+        self.label_mode = ctk.CTkLabel(self.scroll_sidebar, text="", anchor="w")
+        self.label_mode.pack(pady=(10, 0), padx=15, fill="x")
+        self.locale.register(self.label_mode, "sidebar_save_mode")
+
+        self.mode_switch = ctk.CTkSegmentedButton(self.scroll_sidebar, values=["Style Only", "Pixelate"], command=self.on_param_change)
         self.mode_switch.set("Style Only")
-        self.mode_switch.pack(pady=5, padx=20, fill="x")
-        
-        # Tooltips for Save Mode
-        ToolTip(self.label_mode, text="Style Only: 이미지 해상도는 유지하되 픽셀 아트 스타일만 적용합니다.\nPixelate: 실제 이미지 해상도를 줄여 픽셀화합니다.")
+        self.mode_switch.pack(pady=5, padx=15, fill="x")
+        self.theme_manager.register_widget(self.mode_switch)
 
-        # Params Container
-        self.param_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        self.param_frame.pack(fill="both", expand=True, padx=10)
+        self.param_frame = ctk.CTkFrame(self.scroll_sidebar, fg_color="transparent")
+        self.param_frame.pack(fill="both", expand=True, padx=5)
 
-        # Pixel Size Section (Compact)
+        # Params: Pixel Size
         pixel_header = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         pixel_header.pack(fill="x", pady=(10, 0))
-        self.label_pixel = ctk.CTkLabel(pixel_header, text=self.locale.get("sidebar_pixel_size"), anchor="w", width=80)
+        self.label_pixel = ctk.CTkLabel(pixel_header, text="", anchor="w", width=80)
         self.label_pixel.pack(side="left")
+        self.locale.register(self.label_pixel, "sidebar_pixel_size")
         self.pixel_spin = IntSpinbox(pixel_header, from_=1, to=128, width=100, command=self.update_pixel_from_spinbox)
         self.pixel_spin.pack(side="right")
         self.pixel_spin.set(8)
-        
         self.slider_pixel = ctk.CTkSlider(self.param_frame, from_=1, to=128, number_of_steps=127, command=self.update_pixel_from_slider)
         self.slider_pixel.set(8)
         self.slider_pixel.pack(pady=(2, 5), fill="x")
+        self.theme_manager.register_widget(self.slider_pixel)
 
-        # Color Count Section (Compact)
+        # Params: Color Limit
         self.color_limit_group = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         self.color_limit_group.pack(fill="x")
-        
         color_header = ctk.CTkFrame(self.color_limit_group, fg_color="transparent")
         color_header.pack(fill="x", pady=(5, 0))
-        self.label_color_count = ctk.CTkLabel(color_header, text=self.locale.get("sidebar_color_limit"), anchor="w", width=80)
+        self.label_color_count = ctk.CTkLabel(color_header, text="", anchor="w", width=80)
         self.label_color_count.pack(side="left")
+        self.locale.register(self.label_color_count, "sidebar_color_limit")
         self.color_spinbox = IntSpinbox(color_header, from_=2, to=256, width=100, command=self.update_color_from_spinbox)
         self.color_spinbox.pack(side="right")
         self.color_spinbox.set(16)
-        
         self.color_slider = ctk.CTkSlider(self.color_limit_group, from_=2, to=256, number_of_steps=254, command=self.update_color_from_slider)
         self.color_slider.set(16)
         self.color_slider.pack(pady=(2, 5), fill="x")
+        self.theme_manager.register_widget(self.color_slider)
 
-        # Palette Section
-        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_palette_preset"), anchor="w").pack(pady=(5, 0), fill="x")
+        # Params: Palette & FX
+        self.label_pal_preset = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_pal_preset.pack(pady=(5, 0), fill="x")
+        self.locale.register(self.label_pal_preset, "sidebar_palette_preset")
         self.palette_values = ["Limited", "Original", "Grayscale", "GameBoy", "CGA", "Pico-8", "16-bit (4096 Colors)", "USER CUSTOM"]
         self.option_palette = ctk.CTkOptionMenu(self.param_frame, values=self.palette_values, command=self.on_palette_menu_change)
         self.option_palette.set("Limited")
         self.option_palette.pack(pady=5, fill="x")
-
-        self.btn_custom_pal = ctk.CTkButton(self.param_frame, text=self.locale.get("sidebar_edit_custom_pal"), command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
+        self.theme_manager.register_widget(self.option_palette)
+        self.btn_custom_pal = ctk.CTkButton(self.param_frame, text="", command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
         self.btn_custom_pal.pack(pady=5, fill="x")
-
-        self.check_dither = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_dithering"), command=self.on_param_change)
+        self.locale.register(self.btn_custom_pal, "sidebar_edit_custom_pal")
+        self.check_dither = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
         self.check_dither.select()
         self.check_dither.pack(pady=5, fill="x")
+        self.locale.register(self.check_dither, "sidebar_dithering")
+        self.theme_manager.register_widget(self.check_dither)
 
-        # Visual Effects Section
-        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_visual_effects"), anchor="w", font=("Arial", 12, "bold")).pack(pady=(10, 0), fill="x")
-        
-        self.check_remove_bg = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_remove_bg"), command=self.on_param_change)
+        self.label_vis_fx = ctk.CTkLabel(self.param_frame, text="", anchor="w", font=("Arial", 12, "bold"))
+        self.label_vis_fx.pack(pady=(10, 0), fill="x")
+        self.locale.register(self.label_vis_fx, "sidebar_visual_effects")
+        self.check_remove_bg = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
         self.check_remove_bg.pack(pady=5, fill="x")
-        ToolTip(self.check_remove_bg, text="이미지의 모서리 색상을 감지하여 배경을 투명하게 만듭니다.")
-
-        self.check_outline = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_outline"), command=self.on_param_change)
+        self.locale.register(self.check_remove_bg, "sidebar_remove_bg")
+        self.theme_manager.register_widget(self.check_remove_bg)
+        self.check_outline = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
         self.check_outline.pack(pady=5, fill="x")
-
-        self.check_edge_enhance = ctk.CTkCheckBox(self.param_frame, text=self.locale.get("sidebar_edge_enhance"), command=self.on_edge_enhance_toggle)
+        self.locale.register(self.check_outline, "sidebar_outline")
+        self.theme_manager.register_widget(self.check_outline)
+        self.check_edge_enhance = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_edge_enhance_toggle)
         self.check_edge_enhance.pack(pady=5, fill="x")
-        
+        self.locale.register(self.check_edge_enhance, "sidebar_edge_enhance")
+        self.theme_manager.register_widget(self.check_edge_enhance)
+
         edge_header = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         edge_header.pack(fill="x")
-        ctk.CTkLabel(edge_header, text=self.locale.get("sidebar_edge_sens"), anchor="w").pack(side="left")
+        self.label_edge_sens_header = ctk.CTkLabel(edge_header, text="", anchor="w")
+        self.label_edge_sens_header.pack(side="left")
+        self.locale.register(self.label_edge_sens_header, "sidebar_edge_sens")
         self.label_edge_sens = ctk.CTkLabel(edge_header, text="1.0", width=40, anchor="e")
         self.label_edge_sens.pack(side="right")
-        
         self.slider_edge_sens = ctk.CTkSlider(self.param_frame, from_=0, to=10.0, number_of_steps=100, command=self.update_edge_sens_label)
         self.slider_edge_sens.set(1.0)
         self.slider_edge_sens.pack(pady=(2, 5), fill="x")
-        
-        # Initial state for edge slider
+        self.theme_manager.register_widget(self.slider_edge_sens)
         self.update_edge_controls_state()
 
-        # Downsampling Method Section
-        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_downsample"), anchor="w").pack(pady=(5, 0), fill="x")
-        self.downsample_methods = ["Standard", "K-Means"]
-        self.option_downsample = ctk.CTkOptionMenu(self.param_frame, values=self.downsample_methods, command=self.on_param_change)
+        # Downsample & Presets
+        self.label_downsample = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_downsample.pack(pady=(5, 0), fill="x")
+        self.locale.register(self.label_downsample, "sidebar_downsample")
+        self.option_downsample = ctk.CTkOptionMenu(self.param_frame, values=["Standard", "K-Means"], command=self.on_param_change)
         self.option_downsample.set("Standard")
         self.option_downsample.pack(pady=5, fill="x")
+        self.theme_manager.register_widget(self.option_downsample)
 
-        # Preset Section (New)
-        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_presets"), anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        self.label_presets_header = ctk.CTkLabel(self.param_frame, text="", anchor="w", font=("Arial", 12, "bold"))
+        self.label_presets_header.pack(pady=(15, 0), fill="x")
+        self.locale.register(self.label_presets_header, "sidebar_presets")
         preset_frame = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         preset_frame.pack(fill="x", pady=5)
-        
         self.option_presets = ctk.CTkOptionMenu(preset_frame, values=["기본값 (Defaults)"], command=self.apply_preset)
         self.option_presets.set("기본값 (Defaults)")
         self.option_presets.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        
+        self.theme_manager.register_widget(self.option_presets)
         self.btn_save_preset = ctk.CTkButton(preset_frame, text="💾", width=30, command=self.save_preset_dialog)
         self.btn_save_preset.pack(side="right")
-        ToolTip(self.btn_save_preset, text="현재 설정을 새로운 프리셋으로 저장합니다.")
+        self.theme_manager.register_widget(self.btn_save_preset)
 
-        # Theme Section (New)
-        ctk.CTkLabel(self.param_frame, text=self.locale.get("sidebar_theme"), anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
+        # UI Theme Select
+        self.label_theme_header = ctk.CTkLabel(self.param_frame, text="", anchor="w", font=("Arial", 12, "bold"))
+        self.label_theme_header.pack(pady=(15, 0), fill="x")
+        self.locale.register(self.label_theme_header, "sidebar_theme")
         self.option_theme = ctk.CTkOptionMenu(self.param_frame, values=self.theme_manager.get_available_themes(), command=self.change_theme)
         self.option_theme.set("Default Dark")
         self.option_theme.pack(pady=5, fill="x")
+        self.theme_manager.register_widget(self.option_theme)
 
-        # Language Section (New)
-        ctk.CTkLabel(self.param_frame, text="Language:", anchor="w", font=("Arial", 12, "bold")).pack(pady=(15, 0), fill="x")
-        self.option_lang = ctk.CTkOptionMenu(self.param_frame, values=self.locale.get_available_languages(), command=self.change_language)
-        self.option_lang.set(self.locale.current_lang)
-        self.option_lang.pack(pady=5, fill="x")
-
-        # Magnifier Button (Saving space)
-        # Magnifier Button (Saving space)
-        self.btn_open_mag = ctk.CTkButton(self.param_frame, text=self.locale.get("sidebar_open_mag"), command=self.toggle_magnifier, fg_color="#d35400", hover_color="#e67e22")
-        self.btn_open_mag.pack(pady=10, fill="x")
-        self.mag_window = None
-
-        # Status Label - Put in a fixed height container to prevent shifting
-        self.status_container = ctk.CTkFrame(self.sidebar, height=30, fg_color="transparent")
-        self.status_container.pack(side="bottom", pady=5, fill="x")
-        self.status_container.pack_propagate(False)
-
-        self.status_label = ctk.CTkLabel(self.status_container, text="", text_color="#2ecc71") # Greenish status
-        self.status_label.pack(expand=True)
-
-        # Save Section
-        # Save Section
-        self.btn_save = ctk.CTkButton(self.sidebar, text=self.locale.get("sidebar_export"), command=self.save_image, state="disabled", fg_color="#2ecc71", hover_color="#27ae60", height=45, font=("Arial", 16, "bold"))
-        self.btn_save.pack(side="bottom", pady=(5, 20), padx=20, fill="x")
-        
-        # Tooltip for Save Button
-        ToolTip(self.btn_save, text="원본 형식을 유지하고 다른 이름으로 저장합니다.")
-
-        # --- Main Preview Area ---
+        # 3. Main Preview Area
         self.preview_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="#1a1a1a")
         self.preview_frame.grid(row=1, column=1, padx=20, pady=20, sticky="nsew")
-        self.preview_frame.grid_propagate(False) # CRITICAL: Stability
-        
-        # Reset layout to single stable cell
+        self.preview_frame.grid_propagate(False)
         self.preview_frame.grid_columnconfigure(0, weight=1)
         self.preview_frame.grid_rowconfigure(0, weight=1)
-
         self.preview_canvas = ctk.CTkCanvas(self.preview_frame, bg="#1a1a1a", highlightthickness=0)
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
-        
-        # Palette Inspector Overlay (Over the canvas, doesn't shift layout)
-        # We use place to ensure it doesn't trigger parent resize or shifting
-        self.palette_inspector = PaletteInspector(self.preview_frame, width=300, height=28, 
-                                                 click_callback=self.on_palette_color_click,
-                                                 corner_radius=6, border_width=1, border_color="#444")
+        self.palette_inspector = PaletteInspector(self.preview_frame, width=300, height=28, click_callback=self.on_palette_color_click, corner_radius=6, border_width=1, border_color="#444")
         self.palette_inspector.place(relx=0.0, rely=0.0, x=15, y=15, anchor="nw")
-
-        # Resolution Info Overlay (Top Right)
-        self.res_info_frame = ctk.CTkFrame(self.preview_frame, width=120, height=28, 
-                                          corner_radius=6, border_width=1, border_color="#444", fg_color="#2b2b2b")
+        self.res_info_frame = ctk.CTkFrame(self.preview_frame, width=120, height=28, corner_radius=6, border_width=1, border_color="#444", fg_color="#2b2b2b")
         self.res_info_frame.place(relx=1.0, rely=0.0, x=-15, y=15, anchor="ne")
         self.res_info_frame.pack_propagate(False)
         self.res_label = ctk.CTkLabel(self.res_info_frame, text="0 x 0", font=("Consolas", 12, "bold"), text_color="#aaa")
         self.res_label.pack(expand=True)
-
         self.preview_canvas.bind("<MouseWheel>", self.on_preview_wheel)
         self.preview_canvas.bind("<Motion>", self.update_magnifier)
         self.preview_canvas.bind("<Configure>", self.on_resize)
-
         self.canvas_image_id = None
         self.tk_preview = None
 
-        # --- Right Inventory Sidebar ---
+        # 4. Right Inventory
         self.inventory_frame = ctk.CTkFrame(self, width=180, corner_radius=0)
         self.inventory_frame.grid(row=1, column=2, sticky="nsew")
         self.inventory_frame.grid_propagate(False)
-        
-        # Load Image Button (at top of inventory)
-        self.btn_add_to_inv = ctk.CTkButton(self.inventory_frame, text=self.locale.get("inv_add"), command=self.add_image_to_inventory, height=35, fg_color="#27ae60")
+        self.btn_add_to_inv = ctk.CTkButton(self.inventory_frame, text="", command=self.add_image_to_inventory, height=35)
         self.btn_add_to_inv.pack(pady=10, padx=10, fill="x")
-        
-        self.label_inv_header = ctk.CTkLabel(self.inventory_frame, text=f"{self.locale.get('inv_title')} (0/256)", font=("Arial", 11))
+        self.locale.register(self.btn_add_to_inv, "inv_add")
+        self.theme_manager.register_widget(self.btn_add_to_inv, role="success")
+
+        self.label_inv_header = ctk.CTkLabel(self.inventory_frame, text="", font=("Arial", 11))
         self.label_inv_header.pack(pady=(5, 0))
-        
-        # Scrollable list for inventory items
         self.inventory_scroll = ctk.CTkScrollableFrame(self.inventory_frame, width=160)
         self.inventory_scroll.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        # Format selection for export
-        ctk.CTkLabel(self.inventory_frame, text=self.locale.get("inv_format"), anchor="w").pack(pady=(5, 0), padx=10, fill="x")
+        self.label_inv_fmt = ctk.CTkLabel(self.inventory_frame, text="", anchor="w")
+        self.label_inv_fmt.pack(pady=(5, 0), padx=10, fill="x")
+        self.locale.register(self.label_inv_fmt, "inv_format")
         self.format_combo = ctk.CTkOptionMenu(self.inventory_frame, values=["PNG", "JPG", "BMP", "WEBP"])
         self.format_combo.set("PNG")
         self.format_combo.pack(pady=5, padx=10, fill="x")
-        
-        # Batch Export Button
-        self.btn_batch_export = ctk.CTkButton(self.inventory_frame, text=self.locale.get("inv_save_all"), command=self.batch_export, height=35, fg_color="#3498db")
+        self.theme_manager.register_widget(self.format_combo)
+        self.btn_batch_export = ctk.CTkButton(self.inventory_frame, text="", command=self.batch_export, height=35, fg_color="#3498db")
         self.btn_batch_export.pack(pady=10, padx=10, fill="x", side="bottom")
+        self.locale.register(self.btn_batch_export, "inv_save_all")
 
+        # Initial Text Sync
+        self.update_ui_text()
+
+    # --- Methods (Correctly Indented) ---
     def load_presets(self):
-        """Loads presets from the JSON file."""
         if os.path.exists(self.presets_path):
             try:
                 with open(self.presets_path, "r", encoding="utf-8") as f:
                     self.presets = json.load(f)
-                
-                # Update UI ComboBox
-                preset_names = list(self.presets.keys())
-                if preset_names:
-                    self.option_presets.configure(values=preset_names)
-                    # Don't set yet, keep "기본값 (Defaults)" or similar if it's not in keys
-                print(f"Loaded {len(self.presets)} presets.")
-            except Exception as e:
-                print(f"Error loading presets: {e}")
-
-    def change_theme(self, theme_name):
-        """Changes the global UI theme accent color based on preset."""
-        accent = self.theme_manager.get_preset_accent(theme_name)
-        self.change_accent_color(accent)
-        print(f"Theme changed to: {theme_name} ({accent})")
-
-    def change_language(self, lang_code):
-        """Changes the UI language and updates all labels."""
-        if self.locale.load_language(lang_code):
-            print(f"Language changed to: {lang_code}")
-            self.update_ui_text()
-
-    def update_ui_text(self):
-        """Updates all UI components with the current locale strings."""
-        self.nav_label.configure(text=self.locale.get("nav_palette_mgmt"))
-        self.btn_load_pal.configure(text=self.locale.get("nav_load"))
-        self.btn_save_pal.configure(text=self.locale.get("nav_save_as"))
-        self.proj_label.configure(text=self.locale.get("nav_project"))
-        self.btn_load_proj.configure(text=self.locale.get("nav_open_pcp"))
-        self.btn_save_proj.configure(text=self.locale.get("nav_save_pcp"))
-        
-        self.label_setting_mode.configure(text=self.locale.get("sidebar_setting_mode"))
-        self.label_mode.configure(text=self.locale.get("sidebar_save_mode"))
-        self.label_pixel.configure(text=self.locale.get("sidebar_pixel_size"))
-        self.label_color_count.configure(text=self.locale.get("sidebar_color_limit"))
-        
-        # We also need to update the parent labels of param sections
-        for widget in self.param_frame.winfo_children():
-            if isinstance(widget, ctk.CTkLabel):
-                txt = widget.cget("text")
-                if "팔레트 프리셋" in txt or "Palette Preset" in txt:
-                    widget.configure(text=self.locale.get("sidebar_palette_preset"))
-                elif "비주얼 효과" in txt or "Visual Effects" in txt:
-                    widget.configure(text=self.locale.get("sidebar_visual_effects"))
-                elif "다운샘플링" in txt or "Downsampling" in txt:
-                    widget.configure(text=self.locale.get("sidebar_downsample"))
-                elif "필터 프리셋" in txt or "Filter Presets" in txt:
-                    widget.configure(text=self.locale.get("sidebar_presets"))
-                elif "UI 테마" in txt or "UI Theme" in txt:
-                    widget.configure(text=self.locale.get("sidebar_theme"))
-
-        self.btn_custom_pal.configure(text=self.locale.get("sidebar_edit_custom_pal"))
-        self.check_dither.configure(text=self.locale.get("sidebar_dithering"))
-        self.check_remove_bg.configure(text=self.locale.get("sidebar_remove_bg"))
-        self.check_outline.configure(text=self.locale.get("sidebar_outline"))
-        self.check_edge_enhance.configure(text=self.locale.get("sidebar_edge_enhance"))
-        
-        # To avoid re-searching, we should have kept references to these labels
-        # but the above loop handles it for generic labels.
-        
-        self.btn_open_mag.configure(text=self.locale.get("sidebar_open_mag"))
-        self.btn_save.configure(text=self.locale.get("sidebar_export"))
-        
-        self.btn_add_to_inv.configure(text=self.locale.get("inv_add"))
-        self.update_inventory_count_label()
-        
-        # Update format label
-        for widget in self.inventory_frame.winfo_children():
-            if isinstance(widget, ctk.CTkLabel) and ("저장 포맷" in widget.cget("text") or "Format" in widget.cget("text")):
-                widget.configure(text=self.locale.get("inv_format"))
-
-        self.btn_batch_export.configure(text=self.locale.get("inv_save_all"))
-
-    def change_accent_color(self, hex_color):
-        """Updates the accent color of key UI components."""
-        # Update buttons, sliders etc. that use the default accent
-        # CTK doesn't support full live re-theme, so we target specific widget types
-        try:
-            # Update all CTK components that should follow accent
-            # In a real app, we might need a more robust recursive update
-            pass # CTK limitations: requires restart for full theme. 
-            # We will focus on updating the buttons and sliders we can.
-        except Exception as e:
-            print(f"Error updating accent: {e}")
+                names = list(self.presets.keys())
+                if names: self.option_presets.configure(values=names)
+            except Exception as e: print(f"Error loading presets: {e}")
 
     def apply_preset(self, preset_name):
-        """Applies a selected preset to the UI."""
-        if preset_name in self.presets:
-            print(f"Applying preset: {preset_name}")
-            self.restore_ui_state(self.presets[preset_name])
+        if preset_name in self.presets: self.restore_ui_state(self.presets[preset_name])
 
-    def save_preset_dialog(self):
-        """Opens a simple dialog to name and save the current preset."""
-        dialog = ctk.CTkInputDialog(text="새로운 프리셋 이름을 입력하세요:", title="프리셋 저장")
-        name = dialog.get_input()
-        if name:
-            self.presets[name] = self.capture_ui_state()
-            try:
-                with open(self.presets_path, "w", encoding="utf-8") as f:
-                    json.dump(self.presets, f, indent=4)
-                
-                # Update UI
-                self.option_presets.configure(values=list(self.presets.keys()))
-                self.option_presets.set(name)
-                print(f"Preset '{name}' saved.")
-            except Exception as e:
-                print(f"Error saving preset: {e}")
+    def change_theme(self, theme_name):
+        self.theme_manager.set_theme(theme_name)
+
+    def change_language(self, lang_code):
+        if self.locale.load_language(lang_code): self.update_ui_text()
+
+    def open_plugin_manager(self):
+        PluginWindow(self, self.plugin_engine, on_change_callback=self.on_param_change)
+
+    def update_ui_text(self):
+        self.locale.refresh_widgets()
+        self.update_inventory_count_label()
 
     def load_default_palette(self):
         path = os.path.join(self.palette_dir, "default_palette.json")
-        if os.path.exists(path):
-            self._load_palette_from_path(path)
+        if os.path.exists(path): self._load_palette_from_path(path)
 
     def _load_palette_from_path(self, path):
         try:
@@ -463,886 +366,438 @@ class PixelApp(ctk.CTk):
                 colors = json.load(f)
                 if isinstance(colors, list) and len(colors) > 0:
                     self.user_palette_colors_persistent[:len(colors)] = [tuple(c) for c in colors]
-            print(f"Palette loaded from {path}")
-        except Exception as e:
-            print(f"Error loading palette: {e}")
+        except Exception as e: print(f"Error loading palette: {e}")
 
     def save_default_palette(self):
         path = os.path.join(self.palette_dir, "default_palette.json")
-        self._save_palette_to_path(path)
-
-    def _save_palette_to_path(self, path):
         try:
-            with open(path, "w") as f:
-                json.dump(self.user_palette_colors_persistent, f)
-            print(f"Palette saved to {path}")
-        except Exception as e:
-            print(f"Error saving palette: {e}")
+            with open(path, "w") as f: json.dump(self.user_palette_colors_persistent, f)
+        except Exception as e: print(f"Error saving palette: {e}")
 
     def load_palette_file(self):
-        file_path = filedialog.askopenfilename(
-            parent=self,
-            initialdir=self.last_palette_dir,
-            filetypes=[("JSON files", "*.json")]
-        )
-        if file_path:
-            self.last_palette_dir = os.path.dirname(file_path)
-            self._load_palette_from_path(file_path)
+        f = filedialog.askopenfilename(parent=self, initialdir=self.last_palette_dir, filetypes=[("JSON files", "*.json")])
+        if f: 
+            self.last_palette_dir = os.path.dirname(f)
+            self._load_palette_from_path(f)
             self.option_palette.set("USER CUSTOM")
             self.on_palette_menu_change("USER CUSTOM")
 
     def save_palette_file(self):
-        file_path = filedialog.asksaveasfilename(
-            parent=self,
-            initialdir=self.last_palette_dir,
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json")]
-        )
-        if file_path:
-            self.last_palette_dir = os.path.dirname(file_path)
-            self._save_palette_to_path(file_path)
+        f = filedialog.asksaveasfilename(parent=self, initialdir=self.last_palette_dir, defaultextension=".json", filetypes=[("JSON files", "*.json")])
+        if f: 
+            self.last_palette_dir = os.path.dirname(f)
+            self.save_default_palette()
 
     def save_project_file(self):
-        if not self.original_image_path:
-            return
-
+        if not self.original_image_path: return
         state = {
-            "source_path": self.original_image_path,
-            "pixel_size": int(self.slider_pixel.get()),
-            "palette_mode": self.option_palette.get(),
-            "max_colors": int(self.color_slider.get()),
-            "dither": self.check_dither.get(),
-            "outline_enabled": self.check_outline.get(),
-            "custom_colors": self.user_palette_colors_persistent,
+            "source_path": self.original_image_path, 
+            "pixel_size": int(self.slider_pixel.get()), 
+            "palette_mode": self.option_palette.get(), 
+            "max_colors": int(self.color_slider.get()), 
+            "dither": self.check_dither.get(), 
+            "outline_enabled": self.check_outline.get(), 
+            "custom_colors": self.user_palette_colors_persistent, 
             "preview_zoom": self.preview_zoom
         }
-        
-        file_path = filedialog.asksaveasfilename(
-            parent=self,
-            defaultextension=".pcp",
-            filetypes=[("Pixel Crafter Project", "*.pcp")]
-        )
-        if file_path:
-            if ProjectManager.save_project(file_path, state):
-                print(f"Project saved to {file_path}")
+        f = filedialog.asksaveasfilename(parent=self, defaultextension=".pcp", filetypes=[("Pixel Crafter Project", "*.pcp")])
+        if f: ProjectManager.save_project(f, state)
 
     def load_project_file(self):
-        file_path = filedialog.askopenfilename(
-            parent=self,
-            filetypes=[("Pixel Crafter Project", "*.pcp")]
-        )
-        if not file_path: return
-
-        state = ProjectManager.load_project(file_path)
-        if state is None:
-            messagebox.showerror("보안 오류", "프로젝트 파일이 손상되었거나 변조되었습니다.\n(Integrity check failed)")
-            return
-
-        # Restore State
+        f = filedialog.askopenfilename(parent=self, filetypes=[("Pixel Crafter Project", "*.pcp")])
+        if not f: return
+        state = ProjectManager.load_project(f)
+        if state is None: messagebox.showerror("보안 오류", "파일 손상"); return
         try:
             if "source_path" in state and os.path.exists(state["source_path"]):
                 self.original_image_path = state["source_path"]
-                # Re-open image
-                with Image.open(self.original_image_path) as img:
-                    self.original_size = img.size
+                with Image.open(self.original_image_path) as img: self.original_size = img.size
                 self.preview_zoom = state.get("preview_zoom", -1)
-                
-            if "pixel_size" in state:
-                self.slider_pixel.set(state["pixel_size"])
-                # No longer updating label text to maintain stability
-                
-            if "palette_mode" in state:
+            if "pixel_size" in state: self.slider_pixel.set(state["pixel_size"])
+            if "palette_mode" in state: 
                 self.option_palette.set(state["palette_mode"])
                 self.on_palette_menu_change(state["palette_mode"])
-                
-            if "max_colors" in state:
+            if "max_colors" in state: 
                 self.color_slider.set(state["max_colors"])
                 self.color_spinbox.set(state["max_colors"])
-                
-            if "dither" in state:
-                if state["dither"]: self.check_dither.select()
-                else: self.check_dither.deselect()
-                
-            if "outline_enabled" in state:
-                if state["outline_enabled"]: self.check_outline.select()
-                else: self.check_outline.deselect()
-                
-            if "custom_colors" in state:
-                # Convert back to tuples if loaded as lists
-                self.user_palette_colors_persistent = [tuple(c) for c in state["custom_colors"]]
-                
-            # Trigger reprocessing
+            if "dither" in state: (self.check_dither.select() if state["dither"] else self.check_dither.deselect())
+            if "outline_enabled" in state: (self.check_outline.select() if state["outline_enabled"] else self.check_outline.deselect())
+            if "custom_colors" in state: self.user_palette_colors_persistent = [tuple(c) for c in state["custom_colors"]]
             self.process_image()
             self.btn_save.configure(state="normal")
-            print(f"Project loaded from {file_path}")
-            
-        except Exception as e:
-            print(f"Error restoring project state: {e}")
+        except Exception as e: print(f"Error project load: {e}")
 
     def on_palette_menu_change(self, value):
-        if value in ["Original", "GameBoy", "CGA", "Pico-8", "USER CUSTOM", "16-bit (4096 Colors)"]:
-            self.color_limit_group.pack_forget()
-        else:
-            self.color_limit_group.pack(after=self.slider_pixel, fill="x")
-            
-        if value == "USER CUSTOM":
-            self.active_palette_mode = "Custom_User"
-            self.on_param_change()
-        elif value == "16-bit (4096 Colors)":
-            self.active_palette_mode = "Custom_16bit"
-            self.on_param_change()
-        else:
-            self.active_palette_mode = "Standard"
-            self.on_param_change()
+        if value in ["Original", "GameBoy", "CGA", "Pico-8", "USER CUSTOM", "16-bit (4096 Colors)"]: self.color_limit_group.pack_forget()
+        else: self.color_limit_group.pack(after=self.slider_pixel, fill="x")
+        self.active_palette_mode = "Custom_User" if value == "USER CUSTOM" else ("Custom_16bit" if value == "16-bit (4096 Colors)" else "Standard")
+        self.on_param_change()
 
-    def on_palette_color_click(self, index, color):
-        """Called when a color in the inspector is clicked."""
-        print(f"Inspector color clicked: Index {index}, Color {color}")
-        # Automatically open custom palette editor with this index selected
-        # We use current inspector colors as the base for custom palette
-        self.open_custom_palette(initial_index=index)
+    def on_palette_color_click(self, index, color): self.open_custom_palette(initial_index=index)
 
     def open_custom_palette(self, initial_index=0):
-        # Pass current inspector colors as initial if available
-        # Ensure we always have a valid list of colors
-        current_colors = self.palette_inspector.colors if self.palette_inspector.colors else self.user_palette_colors_persistent
-        CustomPaletteWindow(self, self.on_custom_palette_applied, initial_colors=current_colors, initial_index=initial_index, live_callback=self.on_live_palette_update)
+        current = self.palette_inspector.colors if self.palette_inspector.colors else self.user_palette_colors_persistent
+        CustomPaletteWindow(self, self.on_custom_palette_applied, initial_colors=current, initial_index=initial_index, live_callback=self.on_live_palette_update)
 
     def on_live_palette_update(self, colors):
-        """Called for real-time preview during palette editing."""
-        if colors:
+        if colors: 
             self.user_palette_colors_persistent[:len(colors)] = colors
             self.active_palette_mode = "Custom_User"
-            # We don't change the OptionMenu to "USER CUSTOM" yet to avoid UI flicker,
-            # but we force the processing logic to use the updated custom colors.
             self.on_param_change()
 
     def on_custom_palette_applied(self, mode, colors):
-        if colors:
+        if colors: 
             self.user_palette_colors_persistent[:len(colors)] = colors
-            # If we got fewer than 16, keep the rest as black or previous? 
-            # Consistent with component.py, but here we just update persistent state.
             self.save_default_palette()
-        
-        # Ensure 'USER CUSTOM' is selected and triggered
         self.active_palette_mode = "Custom_User"
         self.option_palette.set("USER CUSTOM")
-        self.on_palette_menu_change("USER CUSTOM") # This calls on_param_change()
+        self.on_palette_menu_change("USER CUSTOM")
 
-    def update_pixel_from_slider(self, value):
-        self.pixel_spin.set(int(value))
-        self.on_param_change()
-        
-    def update_pixel_from_spinbox(self):
-        val = self.pixel_spin.get()
-        if val is not None:
-            self.slider_pixel.set(val)
-            self.on_param_change()
+    def update_pixel_from_slider(self, value): self.pixel_spin.set(int(value)); self.on_param_change()
+    def update_pixel_from_spinbox(self): 
+        v = self.pixel_spin.get()
+        if v is not None: self.slider_pixel.set(v); self.on_param_change()
 
-    def update_color_from_slider(self, value):
-        val = int(value)
-        self.color_spinbox.set(val)
-        self.on_param_change()
-
+    def update_color_from_slider(self, value): self.color_spinbox.set(int(value)); self.on_param_change()
     def update_color_from_spinbox(self):
-        val = self.color_spinbox.get()
-        if val is not None:
-            val = max(2, min(256, val))
-            self.color_spinbox.set(val)
-            self.color_slider.set(val)
+        v = self.color_spinbox.get()
+        if v is not None: 
+            v = max(2, min(256, v))
+            self.color_spinbox.set(v)
+            self.color_slider.set(v)
             self.on_param_change()
 
-    def zoom_in(self):
-        if self.mag_zoom < 8:
-            self.mag_zoom += 1
-            self.update_zoom_ui()
-
-    def zoom_out(self):
-        if self.mag_zoom > 2:
-            self.mag_zoom -= 1
-            self.update_zoom_ui()
-
-    def update_zoom_ui(self):
-        self.label_zoom_val.configure(text=f"{self.mag_zoom}x")
-
-    def update_edge_sens_label(self, value):
-        self.label_edge_sens.configure(text=f"{float(value):.1f}")
-        self.on_param_change()
-
-    def on_edge_enhance_toggle(self):
-        self.update_edge_controls_state()
-        self.on_param_change()
-
+    def update_edge_sens_label(self, value): self.label_edge_sens.configure(text=f"{float(value):.1f}"); self.on_param_change()
+    def on_edge_enhance_toggle(self): self.update_edge_controls_state(); self.on_param_change()
     def update_edge_controls_state(self):
-        if self.check_edge_enhance.get():
-            self.slider_edge_sens.configure(state="normal", progress_color=["#3B8ED0", "#1F6AA5"])
-            self.label_edge_sens.configure(text_color=["#000000", "#ffffff"])
-        else:
+        if self.check_edge_enhance.get(): 
+            self.slider_edge_sens.configure(state="normal", progress_color=self.theme_manager.get_current_accent())
+            self.label_edge_sens.configure(text_color="#FFFFFF")
+        else: 
             self.slider_edge_sens.configure(state="disabled", progress_color="gray")
             self.label_edge_sens.configure(text_color="gray")
 
     def on_setting_mode_change(self, value):
         if value == "Individual" and self.current_inventory_id is not None:
-            # Capture current UI as the individual state for the selected image
-            entry = self.image_manager.get_image(self.current_inventory_id)
-            if entry and entry["params"] is None:
-                entry["params"] = self.capture_ui_state()
-        print(f"Setting Mode changed to: {value}")
+            e = self.image_manager.get_image(self.current_inventory_id)
+            if e and e["params"] is None: e["params"] = self.capture_ui_state()
 
     def capture_ui_state(self):
-        """Captures all relevant UI parameters into a dictionary."""
         return {
-            "save_mode": self.mode_switch.get(),
-            "pixel_size": int(self.slider_pixel.get()),
-            "color_count": int(self.color_slider.get()),
-            "palette_mode": self.option_palette.get(),
-            "dither": self.check_dither.get(),
-            "remove_bg": self.check_remove_bg.get(),
-            "outline": self.check_outline.get(),
-            "edge_enhance": self.check_edge_enhance.get(),
-            "edge_sensitivity": float(self.slider_edge_sens.get()),
-            "downsample_method": self.option_downsample.get(),
-            "custom_colors": list(self.user_palette_colors_persistent) # Snapshot
+            "save_mode": self.mode_switch.get(), 
+            "pixel_size": int(self.slider_pixel.get()), 
+            "color_count": int(self.color_slider.get()), 
+            "palette_mode": self.option_palette.get(), 
+            "dither": self.check_dither.get(), 
+            "remove_bg": self.check_remove_bg.get(), 
+            "outline": self.check_outline.get(), 
+            "edge_enhance": self.check_edge_enhance.get(), 
+            "edge_sensitivity": float(self.slider_edge_sens.get()), 
+            "downsample_method": self.option_downsample.get(), 
+            "custom_colors": list(self.user_palette_colors_persistent)
         }
 
-    def validate_params(self, params):
-        """Validates and sanitizes parameter types and ranges."""
-        try:
-            # 1. Pixel Size (1-128)
-            if "pixel_size" in params:
-                params["pixel_size"] = max(1, min(128, int(params["pixel_size"])))
-            
-            # 2. Color Count (2-256)
-            if "color_count" in params:
-                params["color_count"] = max(2, min(256, int(params["color_count"])))
-            
-            # 3. Edge Sensitivity (0.0-10.0)
-            if "edge_sensitivity" in params:
-                params["edge_sensitivity"] = max(0.0, min(10.0, float(params["edge_sensitivity"])))
-            
-            # 4. Enums Validation
-            if "save_mode" in params and params["save_mode"] not in ["Style Only", "Pixelate"]:
-                params["save_mode"] = "Style Only"
-            
-            if "palette_mode" in params and params["palette_mode"] not in self.palette_values:
-                params["palette_mode"] = "Limited"
-                
-            if "downsample_method" in params and params["downsample_method"] not in self.downsample_methods:
-                params["downsample_method"] = "Standard"
-                
-            return params
-        except Exception as e:
-            print(f"Validation Error: {e}")
-            return None
-
     def restore_ui_state(self, params):
-        """Restores UI parameters from a dictionary."""
         if not params: return
-        
-        # Security: Validate input parameters before applying
-        params = self.validate_params(params)
-        if not params: return
-        
-        # Block on_param_change from triggering multiple times
-        # We can do this by setting a flag or just letting it trigger once at the end.
-        # But some widgets like OptionMenu or SegmentedButton trigger command on .set() or manual select.
-        # CTK widgets usually don't trigger command on .set() but let's be careful.
-        
         try:
-            if "save_mode" in params:
-                self.mode_switch.set(params["save_mode"])
-            
-            if "pixel_size" in params:
+            if "save_mode" in params: self.mode_switch.set(params["save_mode"])
+            if "pixel_size" in params: 
                 self.slider_pixel.set(params["pixel_size"])
                 self.pixel_spin.set(params["pixel_size"])
-                
-            if "color_count" in params:
+            if "color_count" in params: 
                 self.color_slider.set(params["color_count"])
                 self.color_spinbox.set(params["color_count"])
-                
-            if "palette_mode" in params:
+            if "palette_mode" in params: 
                 self.option_palette.set(params["palette_mode"])
                 self.on_palette_menu_change(params["palette_mode"])
-                
-            if "dither" in params:
-                if params["dither"]: self.check_dither.select()
-                else: self.check_dither.deselect()
-                
-            if "remove_bg" in params:
-                if params["remove_bg"]: self.check_remove_bg.select()
-                else: self.check_remove_bg.deselect()
-                
-            if "outline" in params:
-                if params["outline"]: self.check_outline.select()
-                else: self.check_outline.deselect()
-                
-            if "edge_enhance" in params:
-                if params["edge_enhance"]: self.check_edge_enhance.select()
-                else: self.check_edge_enhance.deselect()
+            if "dither" in params: (self.check_dither.select() if params["dither"] else self.check_dither.deselect())
+            if "remove_bg" in params: (self.check_remove_bg.select() if params["remove_bg"] else self.check_remove_bg.deselect())
+            if "outline" in params: (self.check_outline.select() if params["outline"] else self.check_outline.deselect())
+            if "edge_enhance" in params: 
+                (self.check_edge_enhance.select() if params["edge_enhance"] else self.check_edge_enhance.deselect())
                 self.update_edge_controls_state()
-                
-            if "edge_sensitivity" in params:
+            if "edge_sensitivity" in params: 
                 self.slider_edge_sens.set(params["edge_sensitivity"])
                 self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
-                
-            if "downsample_method" in params:
-                self.option_downsample.set(params["downsample_method"])
-                
-            if "custom_colors" in params:
-                self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
-                
-            # Trigger one final process
+            if "downsample_method" in params: self.option_downsample.set(params["downsample_method"])
+            if "custom_colors" in params: self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
             self.on_param_change()
-            
-        except Exception as e:
-            print(f"Error restoring UI state: {e}")
+        except Exception as e: print(f"Error restore: {e}")
 
     def on_param_change(self, *args):
         if self.current_inventory_id is not None:
-            # If in individual mode, save current UI state to the selected item
             if self.setting_mode_switch.get() == "Individual":
-                entry = self.image_manager.get_image(self.current_inventory_id)
-                if entry:
-                    entry["params"] = self.capture_ui_state()
-            
-            # Re-select (or just process) to trigger processing on correct image
-            img_entry = self.image_manager.get_image(self.current_inventory_id)
-            if img_entry:
-                self.process_inventory_image(img_entry["pil_image"])
-        elif self.original_image_path:
+                e = self.image_manager.get_image(self.current_inventory_id)
+                if e: e["params"] = self.capture_ui_state()
+            e = self.image_manager.get_image(self.current_inventory_id)
+            if e: self.process_inventory_image(e["pil_image"])
+        elif self.original_image_path: 
             self.process_image()
 
     def select_inventory_image(self, image_id):
-        # If switching AWAY from an image in individual mode, we already saved on param change.
-        # But what if we just selected it and changed nothing?
-        # Actually, saving on every change is safer.
-        
         self.current_inventory_id = image_id
-        img_entry = self.image_manager.get_image(image_id)
-        if img_entry:
-            # Handle Individual Setting Mode
+        e = self.image_manager.get_image(image_id)
+        if e:
             if self.setting_mode_switch.get() == "Individual":
-                if img_entry["params"]:
-                    self.restore_ui_state(img_entry["params"])
-                else:
-                    # First time selecting this image in individual mode
-                    # Use current UI state as its starting point
-                    img_entry["params"] = self.capture_ui_state()
-                    self.process_inventory_image(img_entry["pil_image"])
-            else:
-                # Global mode: just process with current UI
-                self.process_inventory_image(img_entry["pil_image"])
+                if e["params"]: self.restore_ui_state(e["params"])
+                else: 
+                    e["params"] = self.capture_ui_state()
+                    self.process_inventory_image(e["pil_image"])
+            else: 
+                self.process_inventory_image(e["pil_image"])
 
-    def process_inventory_image(self, pil_image):
-        """Unified entry point for processing an image from inventory."""
+    def process_inventory_image(self, pil_image): 
         self._start_threaded_process("pil", pil_image)
 
     def open_image(self):
-        file_path = filedialog.askopenfilename(
-            parent=self,
-            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")]
-        )
-        if file_path:
+        f = filedialog.askopenfilename(parent=self, filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")])
+        if f:
             try:
-                self.original_image_path = file_path
-                with Image.open(file_path) as img:
-                    self.original_size = img.size
-                self.preview_zoom = -1 
+                self.original_image_path = f
+                with Image.open(f) as img: self.original_size = img.size
+                self.preview_zoom = -1
                 self.process_image()
                 self.btn_save.configure(state="normal")
-            except DecompressionBombError:
-                messagebox.showerror("보안 경고", "이미지 해상도가 너무 커서 보안을 위해 처리를 중단했습니다.\n(Decompression Bomb detected)")
-            except Exception as e:
-                messagebox.showerror("오류", f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
+            except Exception as e: messagebox.showerror("오류", f"이미지 로드 실패: {e}")
 
     def process_image(self):
-        """Unified entry point for processing original image path."""
-        if not self.original_image_path:
-            return
-        self._start_threaded_process("path", self.original_image_path)
+        if self.original_image_path: 
+            self._start_threaded_process("path", self.original_image_path)
 
     def _start_threaded_process(self, source_type, source_data):
-        """Starts a background thread for image processing to keep UI responsive."""
-        if self._is_processing:
+        if self._is_processing: 
             self._pending_reprocess = True
             self._pending_source = (source_type, source_data)
             return
-            
         self._is_processing = True
         self.status_label.configure(text=self.locale.get("status_processing"))
         self.btn_save.configure(state="disabled")
-
-        # Capture parameters in UI thread
-        params = {
-            "pixel_size": int(self.slider_pixel.get()),
-            "dither": self.check_dither.get(),
-            "max_colors": int(self.color_slider.get()),
-            "edge_enhance": self.check_edge_enhance.get(),
-            "edge_sensitivity": float(self.slider_edge_sens.get()),
-            "palette_choice": self.option_palette.get(),
-            "downsample_method": self.option_downsample.get(),
-            "outline": self.check_outline.get(),
-            "user_pal": self.user_palette_colors_persistent,
-            "remove_bg": self.check_remove_bg.get()
-        }
+        params = self.capture_ui_state()
+        params["user_pal"] = self.user_palette_colors_persistent
+        params["palette_choice"] = params["palette_mode"]
 
         def run():
             try:
-                # 1. PIXELATE (Heavy step)
                 if source_type == "path":
-                    # For path-based processing
-                    with Image.open(source_data) as tmp_img:
-                        self.original_size = tmp_img.size
-                    
-                    raw = pixelate_image(
-                        source_data, 
-                        params["pixel_size"], 
-                        edge_enhance=params["edge_enhance"], 
-                        edge_sensitivity=params["edge_sensitivity"], 
-                        downsample_method=params["downsample_method"],
-                        remove_bg=params["remove_bg"]
-                    )
+                    with Image.open(source_data) as tmp: self.original_size = tmp.size
+                    raw = pixelate_image(source_data, params["pixel_size"], edge_enhance=params["edge_enhance"], edge_sensitivity=params["edge_sensitivity"], downsample_method=params["downsample_method"], remove_bg=params["remove_bg"], plugin_engine=self.plugin_engine, plugin_params=params)
                 else:
-                    # For PIL-based processing (inventory)
                     img = source_data.convert("RGBA")
                     self.original_size = img.size
-                    
-                    # Apply BG Remove if requested
-                    if params["remove_bg"]:
-                         img = remove_background(img, tolerance=40)
-
-                    # Manual pipeline steps for PIL source
-                    from core.processor import enhance_internal_edges, downsample_kmeans_adaptive
-                    if params["edge_enhance"] and params["edge_sensitivity"] > 0:
+                    img = self.plugin_engine.execute_hook("PRE_PROCESS", img, params)
+                    if params["remove_bg"]: img = remove_background(img, tolerance=40)
+                    if params["edge_enhance"]: 
+                        from core.processor import enhance_internal_edges
                         img = enhance_internal_edges(img, params["edge_sensitivity"])
-                    
-                    small_w = max(1, img.size[0] // params["pixel_size"])
-                    small_h = max(1, img.size[1] // params["pixel_size"])
-                    
+                    img = self.plugin_engine.execute_hook("PRE_DOWNSAMPLE", img, params)
+                    sw, sh = max(1, img.size[0] // params["pixel_size"]), max(1, img.size[1] // params["pixel_size"])
                     if params["downsample_method"] == "K-Means":
-                        raw = downsample_kmeans_adaptive(img, params["pixel_size"], small_w, small_h)
-                    else:
-                        raw = img.resize((small_w, small_h), resample=Image.BOX)
+                        from core.processor import downsample_kmeans_adaptive
+                        raw = downsample_kmeans_adaptive(img, params["pixel_size"], sw, sh)
+                    else: 
+                        raw = img.resize((sw, sh), resample=Image.BOX)
+                    raw = self.plugin_engine.execute_hook("POST_DOWNSAMPLE", raw, params)
 
-                if not raw:
+                if not raw: 
                     self.after(0, self._on_processing_complete, None)
                     return
-
-                # 2. APPLY PALETTE
-                if params["palette_choice"] == "USER CUSTOM":
-                    p_name, p_param = "Custom_User", params["user_pal"]
-                elif params["palette_choice"] == "16-bit (4096 Colors)":
-                    p_name, p_param = "Custom_16bit", None
-                else:
-                    p_name, p_param = params["palette_choice"], params["max_colors"]
                 
-                # Custom 16-bit logic (Algorithmic) is handled inside apply_palette_unified via fallback?
-                # Actually our new unified pipeline handles 'Custom_16bit' returning None target,
-                # so we need to handle it or ensure palette.py handles it.
-                # In palette.py we left Custom_16bit returning None target. 
-                # Let's handle it here or modify palette.py?
-                # Wait, better to let palette.py handle it fully to keep app.py clean.
-                # But looking at palette.py I wrote:
-                # elif palette_name == "Custom_16bit": return None, False
-                # And in Apply: if target_palette: ... else: ...
-                # We need to implement the 16bit math logic there.
-                
-                # Let's QUICKLY Fix palette.py 16bit logic first? 
-                # No, I can insert the logic in palette.py now or handle it via a revision.
-                # Let's assume I will fix palette.py in next tool call or usage.
-                # Actually, I missed implementing the 16bit math in the 'else' block of palette.py.
-                # I should re-write palette.py to include 16bit math.
-                
-                processed = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"])
-                
-                # 3. ADD OUTLINE
-                if params["outline"]:
-                    processed = add_outline(processed)
-                
-                # 4. PREVIEW UPSCALE
-                preview = upscale_for_preview(processed, self.original_size)
-                
-                # Update state and UI
-                self.after(0, self._on_processing_complete, processed, preview)
-                
-            except Exception as e:
-                print(f"Error in processing thread: {e}")
+                p_name, p_param = ("Custom_User", params["user_pal"]) if params["palette_choice"] == "USER CUSTOM" else (("Custom_16bit", None) if params["palette_choice"] == "16-bit (4096 Colors)" else (params["palette_choice"], params["color_count"]))
+                proc = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"])
+                proc = self.plugin_engine.execute_hook("POST_PALETTE", proc, params)
+                if params["outline"]: proc = add_outline(proc)
+                proc = self.plugin_engine.execute_hook("FINAL_IMAGE", proc, params)
+                prev = upscale_for_preview(proc, self.original_size)
+                self.after(0, self._on_processing_complete, proc, prev)
+            except Exception as e: 
+                print(f"Thread error: {e}")
                 self.after(0, self._on_processing_complete, None)
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _on_processing_complete(self, processed_img, preview_img=None):
-        """Final UI updates after thread completion."""
+    def _on_processing_complete(self, proc, prev=None):
         self._is_processing = False
         self.status_label.configure(text="")
-        
-        if processed_img:
-            self.raw_pixel_image = processed_img
-            self.preview_image = preview_img
+        if proc:
+            self.raw_pixel_image, self.preview_image = proc, prev
             self.display_image()
             self.btn_save.configure(state="normal")
-            
-            # Update Palette Inspector
-            # Extract predominant colors (up to 16)
             try:
-                # We need extensive colors for inspector. 
-                # processed_img might be RGB (if from quantize). 
-                # Fast way to get colors.
-                # Extract colors for inspector
-                colors = self.extract_used_colors(processed_img)
-                self.palette_inspector.update_colors(colors)
-                
-                # Update resolution label based on mode
-                if self.mode_switch.get() == "Pixelate":
-                    rw, rh = processed_img.size
-                else:
-                    rw, rh = self.original_size
+                clrs = self.extract_used_colors(proc)
+                self.palette_inspector.update_colors(clrs)
+                rw, rh = proc.size if self.mode_switch.get() == "Pixelate" else self.original_size
                 self.res_label.configure(text=f"{rw} x {rh}")
-            except Exception as e:
-                print(f"Inspector update failed: {e}")
-        
-        # Check for pending requests that happened during processing
-        if self._pending_reprocess:
+            except: pass
+        if self._pending_reprocess: 
             self._pending_reprocess = False
-            s_type, s_data = self._pending_source
-            self._start_threaded_process(s_type, s_data)
+            self._start_threaded_process(*self._pending_source)
 
     def extract_used_colors(self, pil_img):
-        """
-        Extracts up to 16 predominant colors from the image.
-        Returns a list of RGB tuples (0-255).
-        """
-        # Convert to RGB to ensure we can get colors
-        temp_img = pil_img.convert("RGB")
-        # getcolors returns (count, (r,g,b))
-        # maxcolors should be high enough to catch all in low-bit modes
-        colors = temp_img.getcolors(maxcolors=4096)
-        if not colors:
-            return []
-            
-        # Sort by count (most frequent first)
-        sorted_colors = sorted(colors, key=lambda x: x[0], reverse=True)
-        # Extract just the RGB part, limiting to 16
-        return [c[1] for c in sorted_colors[:16]]
+        tmp = pil_img.convert("RGB")
+        colors = tmp.getcolors(maxcolors=4096)
+        if not colors: return []
+        sorted_clrs = sorted(colors, key=lambda x: x[0], reverse=True)
+        return [c[1] for c in sorted_clrs[:16]]
 
     def display_image(self):
         if not self.preview_image: return
-        cw = self.preview_canvas.winfo_width()
-        ch = self.preview_canvas.winfo_height()
+        cw, ch = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
         if cw <= 1: cw, ch = 800, 600
         iw, ih = self.preview_image.size
-        
-        if self.preview_zoom == -1:
-            self.preview_zoom = min(cw / iw, ch / ih) * 0.9
-
+        if self.preview_zoom == -1: self.preview_zoom = min(cw / iw, ch / ih) * 0.9
         nw, nh = int(iw * self.preview_zoom), int(ih * self.preview_zoom)
-        display_img = self.preview_image.resize((nw, nh), Image.NEAREST)
-        
-        self.tk_preview = ImageTk.PhotoImage(display_img)
-        if self.canvas_image_id:
-            self.preview_canvas.delete(self.canvas_image_id)
-        
+        disp = self.preview_image.resize((nw, nh), Image.NEAREST)
+        self.tk_preview = ImageTk.PhotoImage(disp)
+        if self.canvas_image_id: self.preview_canvas.delete(self.canvas_image_id)
         self.canvas_image_id = self.preview_canvas.create_image(cw//2, ch//2, image=self.tk_preview, anchor="center")
 
     def on_preview_wheel(self, event):
         if not self.preview_image: return
-        scale_factor = 1.1 if event.delta > 0 else 0.9
-        self.preview_zoom *= scale_factor
-        self.preview_zoom = max(0.1, min(20.0, self.preview_zoom))
+        self.preview_zoom = max(0.1, min(20.0, self.preview_zoom * (1.1 if event.delta > 0 else 0.9)))
         self.display_image()
 
-    def on_resize(self, event):
-        if self.preview_image:
-            self.display_image()
+    def on_resize(self, event): 
+        if self.preview_image: self.display_image()
 
     def toggle_magnifier(self):
-        from ui.components import MagnifierWindow # Delayed import to avoid circular dependency if any, or just ensure it exists
-        if self.mag_window is None or not self.mag_window.winfo_exists():
+        if self.mag_window is None or not self.mag_window.winfo_exists(): 
             self.mag_window = MagnifierWindow(self)
-        else:
+        else: 
             self.mag_window.focus()
 
     def update_magnifier(self, event):
-        if not self.preview_image or not self.canvas_image_id: return
-        if not (self.mag_window and self.mag_window.winfo_exists()): return
-        
-        cw = self.preview_canvas.winfo_width()
-        ch = self.preview_canvas.winfo_height()
+        if not self.preview_image or not self.canvas_image_id or not (self.mag_window and self.mag_window.winfo_exists()): return
+        cw, ch = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
         iw, ih = self.preview_image.size
         nw, nh = int(iw * self.preview_zoom), int(ih * self.preview_zoom)
-        
-        img_x = event.x - (cw//2 - nw//2)
-        img_y = event.y - (ch//2 - nh//2)
-        
-        src_x = int(img_x / self.preview_zoom)
-        src_y = int(img_y / self.preview_zoom)
-        if not (0 <= src_x < iw and 0 <= src_y < ih): return
-
-        self.mag_window.update_zoom(self.preview_image, (src_x, src_y), self.mag_zoom)
+        sx = int((event.x - (cw//2 - nw//2)) / self.preview_zoom)
+        sy = int((event.y - (ch//2 - nh//2)) / self.preview_zoom)
+        if 0 <= sx < iw and 0 <= sy < ih: 
+            self.mag_window.update_zoom(self.preview_image, (sx, sy), self.mag_zoom)
 
     def save_image(self):
-        # Determine the source path from current inventory item if available
-        src_path = self.original_image_path
+        p = self.original_image_path
         if self.current_inventory_id is not None:
-            entry = self.image_manager.get_image(self.current_inventory_id)
-            if entry:
-                src_path = entry["path"]
-                
-        if not src_path: return
-        
-        is_gif = src_path.lower().endswith('.gif')
-        
-        filetypes = [("PNG file", "*.png")]
-        def_ext = ".png"
-        
-        if is_gif:
-            filetypes.insert(0, ("GIF Animation", "*.gif"))
-            def_ext = ".gif"
-            
-        file_path = filedialog.asksaveasfilename(parent=self, defaultextension=def_ext, filetypes=filetypes)
-        
-        if file_path:
-            # Security: Normalize path
-            file_path = os.path.normpath(file_path)
-            
-            # Check if saving as GIF
-            if is_gif and file_path.lower().endswith('.gif'):
-                # Gather params for GIF processing
-                pixel_size = int(self.slider_pixel.get())
-                dither = self.check_dither.get()
-                max_colors_val = int(self.color_slider.get())
-                
-                palette_choice = self.option_palette.get()
-                if palette_choice == "USER CUSTOM":
-                    palette_name = "Custom_User"
-                    p_param = self.user_palette_colors_persistent
-                elif palette_choice == "16-bit (4096 Colors)":
-                    palette_name = "Custom_16bit"
-                    p_param = None
-                else:
-                    palette_name = palette_choice
-                    p_param = max_colors_val
-                
-                self.btn_save.configure(text="Processing GIF...", state="disabled")
-                self.update() # Force UI update
-                
-                outline_enabled = self.check_outline.get()
-                success, count = process_gif(src_path, file_path, pixel_size, palette_name, p_param, dither, outline_enabled)
-                
-                self.btn_save.configure(text="이미지 저장 (Export Image)", state="normal")
-                
-                if success:
-                    print(f"Exported Animated GIF with {count} frames to: {file_path}")
-                else:
-                    print("Failed to export GIF.")
+            e = self.image_manager.get_image(self.current_inventory_id)
+            if e: p = e["path"]
+        if not p: return
+        is_gif = p.lower().endswith('.gif')
+        types = ([("GIF Animation", "*.gif")] if is_gif else []) + [("PNG", "*.png")]
+        f = filedialog.asksaveasfilename(parent=self, defaultextension=(".gif" if is_gif else ".png"), filetypes=types)
+        if f:
+            f = os.path.normpath(f)
+            if is_gif and f.lower().endswith('.gif'):
+                self.btn_save.configure(text="GIF...", state="disabled")
+                self.update()
+                ch = self.option_palette.get()
+                pn, pp = ("Custom_User", self.user_palette_colors_persistent) if ch == "USER CUSTOM" else (("Custom_16bit", None) if ch == "16-bit (4096 Colors)" else (ch, int(self.color_slider.get())))
+                process_gif(p, f, int(self.slider_pixel.get()), pn, pp, self.check_dither.get(), self.check_outline.get())
+                self.btn_save.configure(text=self.locale.get("sidebar_export"), state="normal")
             else:
-                # Normal static save
-                if self.mode_switch.get() == "Pixelate":
-                    if self.raw_pixel_image:
-                        self.raw_pixel_image.save(file_path)
-                else:
-                    if self.preview_image:
-                        self.preview_image.save(file_path)
-                print(f"Export Finished: {file_path}")
+                final = self.raw_pixel_image if self.mode_switch.get() == "Pixelate" else self.preview_image
+                if f.lower().endswith(('.jpg', '.bmp')): final = final.convert("RGB")
+                final.save(f)
 
-    # --- Inventory Methods ---
     def add_image_to_inventory(self):
-        file_paths = filedialog.askopenfilenames(
-            parent=self,
-            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")]
-        )
+        paths = filedialog.askopenfilenames(parent=self, filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")])
         new_ids = []
-        for path in file_paths:
-            added = self.image_manager.add_image(path)
-            new_ids.extend(added)
-            
-        # Add only new widgets to inventory
-        for img_id in new_ids:
-            img_entry = self.image_manager.get_image(img_id)
-            if img_entry:
-                self._create_inventory_item(img_entry)
-        
+        for pt in paths: new_ids.extend(self.image_manager.add_image(pt))
+        for i in new_ids:
+            e = self.image_manager.get_image(i)
+            if e: self._create_inventory_item(e)
         self.update_inventory_count_label()
-        
-        # If first image added and nothing displayed, show it
-        if self.image_manager.count() > 0 and self.current_inventory_id is None:
-            first_img = self.image_manager.get_all()[0]
-            self.select_inventory_image(first_img["id"])
+        if self.image_manager.count() > 0 and self.current_inventory_id is None: 
+            self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
     def update_inventory_count_label(self):
-        # Update count label
-        for widget in self.inventory_frame.winfo_children():
-            if isinstance(widget, ctk.CTkLabel) and (self.locale.get("inv_title") in widget.cget("text") or "인벤토리" in widget.cget("text")):
-                widget.configure(text=f"{self.locale.get('inv_title')} ({self.image_manager.count()}/256)")
+        for w in self.inventory_frame.winfo_children():
+            if isinstance(w, ctk.CTkLabel) and (self.locale.get("inv_title") in w.cget("text") or "인벤토리" in w.cget("text")):
+                w.configure(text=f"{self.locale.get('inv_title')} ({self.image_manager.count()}/256)")
                 break
 
-    def refresh_inventory_ui(self):
-        """Full refresh (used for startup or major changes)."""
-        # Clear existing
-        for widget in list(self.inventory_widgets.values()):
-            widget.destroy()
-        self.inventory_widgets.clear()
-        
-        for img_entry in self.image_manager.get_all():
-            self._create_inventory_item(img_entry)
-        self.update_inventory_count_label()
+    def _create_inventory_item(self, e):
+        fid = e["id"]
+        item = ctk.CTkFrame(self.inventory_scroll, height=70, fg_color="#2a2a2a", corner_radius=8)
+        item.pack(fill="x", pady=3, padx=2)
+        item.pack_propagate(False)
+        self.inventory_widgets[fid] = item
+        thumb = e["thumbnail"]
+        ctk_t = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=(50, 50))
+        tl = ctk.CTkLabel(item, image=ctk_t, text="")
+        tl.pack(side="left", padx=5, pady=5)
+        tl.image = ctk_t
+        nl = ctk.CTkLabel(item, text=e["name"][:12], font=("Arial", 10), anchor="w")
+        nl.pack(side="left", fill="x", expand=True, padx=5)
+        db = ctk.CTkButton(item, text="X", width=20, height=20, fg_color="#e74c3c", command=lambda: self.remove_from_inventory(fid))
+        db.place(relx=1.0, rely=0, anchor="ne", x=-5, y=5)
+        db.lower()
+        item.bind("<Enter>", lambda e: db.lift())
+        item.bind("<Leave>", lambda e: db.lower())
+        item.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
+        tl.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
+        nl.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
 
-    def _create_inventory_item(self, img_entry):
-        image_id = img_entry["id"]
-        item_frame = ctk.CTkFrame(self.inventory_scroll, height=70, fg_color="#2a2a2a", corner_radius=8)
-        item_frame.pack(fill="x", pady=3, padx=2)
-        item_frame.pack_propagate(False)
-        self.inventory_widgets[image_id] = item_frame
-        
-        # Thumbnail
-        thumb = img_entry["thumbnail"]
-        ctk_thumb = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=(50, 50))
-        thumb_label = ctk.CTkLabel(item_frame, image=ctk_thumb, text="")
-        thumb_label.pack(side="left", padx=5, pady=5)
-        thumb_label.image = ctk_thumb  # Keep reference
-        
-        # Name
-        name_label = ctk.CTkLabel(item_frame, text=img_entry["name"][:12], font=("Arial", 10), anchor="w")
-        name_label.pack(side="left", fill="x", expand=True, padx=5)
-        
-        # Delete button (hidden by default, shown on hover)
-        del_btn = ctk.CTkButton(item_frame, text="X", width=20, height=20, fg_color="#e74c3c", 
-                                command=lambda id=img_entry["id"]: self.remove_from_inventory(id))
-        del_btn.place(relx=1.0, rely=0, anchor="ne", x=-5, y=5)
-        del_btn.lower()  # Hide initially
-        
-        # Hover events
-        def on_enter(e):
-            del_btn.lift()
-        def on_leave(e):
-            del_btn.lower()
-            
-        item_frame.bind("<Enter>", on_enter)
-        item_frame.bind("<Leave>", on_leave)
-        
-        # Click to select
-        item_frame.bind("<Button-1>", lambda e, id=img_entry["id"]: self.select_inventory_image(id))
-        thumb_label.bind("<Button-1>", lambda e, id=img_entry["id"]: self.select_inventory_image(id))
-        name_label.bind("<Button-1>", lambda e, id=img_entry["id"]: self.select_inventory_image(id))
-
-    def remove_from_inventory(self, image_id):
-        # Destroy specific widget to avoid full refresh flicker
-        if image_id in self.inventory_widgets:
-            self.inventory_widgets[image_id].destroy()
-            del self.inventory_widgets[image_id]
-            
-        self.image_manager.remove_image(image_id)
+    def remove_from_inventory(self, iid):
+        if iid in self.inventory_widgets: 
+            self.inventory_widgets[iid].destroy()
+            del self.inventory_widgets[iid]
+        self.image_manager.remove_image(iid)
         self.update_inventory_count_label()
-        
-        # If removed current, reset
-        if self.current_inventory_id == image_id:
+        if self.current_inventory_id == iid: 
             self.current_inventory_id = None
             if self.image_manager.count() > 0:
                 self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
     def batch_export(self):
-        """Opens the Batch Export dialog."""
-        if self.image_manager.count() == 0:
-            print("Inventory is empty.")
-            return
-            
-        BatchExportWindow(self, self._start_batch_export_process)
+        if self.image_manager.count() > 0: 
+            BatchExportWindow(self, self._start_batch_export_process)
 
-    def _start_batch_export_process(self, output_dir, formats, window_ref):
-        """Initiates the threaded batch export."""
+    def _start_batch_export_process(self, od, fs, win):
         import concurrent.futures
-        
-        # Capture current Global settings as fallback
-        global_params = self.capture_ui_state()
-        setting_mode = self.setting_mode_switch.get()
-        all_entries = self.image_manager.get_all()
-        total_tasks = len(all_entries) * len(formats)
-        
-        window_ref.log(f"🚀 {len(all_entries)}개 이미지 x {len(formats)}개 포맷 작업 시작...")
-        
-        def export_task(img_entry, fmt):
+        g, mode, entries = self.capture_ui_state(), self.setting_mode_switch.get(), self.image_manager.get_all()
+        def task(e, f):
             try:
-                from core.processor import enhance_internal_edges, remove_background
-                from core.palette import apply_palette_unified
-                
-                # Determine parameters
-                if setting_mode == "Individual" and img_entry["params"]:
-                    p = img_entry["params"]
-                else:
-                    p = global_params
-                
-                pil_img = img_entry["pil_image"].convert("RGBA")
-                
-                # BG Removal
-                if p.get("remove_bg", False):
-                    pil_img = remove_background(pil_img)
+                p = e["params"] if mode == "Individual" and e["params"] else g
+                img = e["pil_image"].convert("RGBA")
+                if p.get("remove_bg"): img = remove_background(img)
+                if p.get("edge_enhance"): 
+                    from core.processor import enhance_internal_edges
+                    img = enhance_internal_edges(img, p["edge_sensitivity"])
+                sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
+                small = img.resize((sw, sh), resample=Image.BOX)
+                pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
+                proc = apply_palette_unified(small, pn, pp, p.get("dither", True))
+                if p.get("outline"): proc = add_outline(proc)
+                final = proc.resize(e["pil_image"].size, Image.NEAREST)
+                if f.lower() in ["jpg", "bmp"]: final = final.convert("RGB")
+                final.save(os.path.join(od, f"{os.path.basename(e['name'])}_pixel.{f.lower()}"))
+                return True, f"✅ {e['name']}"
+            except Exception as e: return False, f"❌ {e}"
+        
+        def run():
+            done = 0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+                fut = [ex.submit(task, e, f) for e in entries for f in fs]
+                for f in concurrent.futures.as_completed(fut):
+                    done += 1
+                    s, m = f.result()
+                    self.after(0, lambda m=m: win.log(m))
+                    self.after(0, lambda d=done, tl=len(fut): win.update_progress(d, tl))
+            self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
+        
+        threading.Thread(target=run, daemon=True).start()
 
-                # Edge enhancement
-                if p.get("edge_enhance", False) and p.get("edge_sensitivity", 1.0) > 0:
-                    pil_img = enhance_internal_edges(pil_img, p["edge_sensitivity"])
-                
-                # Downsample
-                pixel_size = p.get("pixel_size", 8)
-                small_w = max(1, pil_img.size[0] // pixel_size)
-                small_h = max(1, pil_img.size[1] // pixel_size)
-                small_img = pil_img.resize((small_w, small_h), resample=Image.BOX)
-                
-                # Apply palette
-                pal_choice = p.get("palette_mode", "Limited")
-                if pal_choice == "USER CUSTOM":
-                    p_name, p_param = "Custom_User", p.get("custom_colors")
-                elif pal_choice == "16-bit (4096 Colors)":
-                    p_name, p_param = "Custom_16bit", None
-                else:
-                    p_name, p_param = pal_choice, p.get("color_count", 16)
-                
-                processed = apply_palette_unified(small_img, p_name, custom_colors=p_param, dither=p.get("dither", True))
-                
-                # Outline
-                if p.get("outline", False):
-                    processed = add_outline(processed)
-                
-                # Upscale
-                final = processed.resize(img_entry["pil_image"].size, resample=Image.NEAREST)
-                
-                # Handle format-specific conversion
-                ext = fmt.lower()
-                if ext in ["jpg", "bmp"]:
-                    final = final.convert("RGB")
-                
-                # Security: Enforce basename to prevent path traversal via img_entry['name']
-                safe_name = os.path.basename(img_entry['name'])
-                filename = f"{safe_name}_pixel.{ext}"
-                save_path = os.path.join(os.path.normpath(output_dir), filename)
-                
-                final.save(save_path)
-                return True, f"✅ {filename} 저장 완료"
-            except Exception as e:
-                return False, f"❌ {img_entry['name']} ({fmt}) 실패: {e}"
-
-        def run_executor():
-            completed = 0
-            success_count = 0
-            
-            # Using ThreadPoolExecutor for I/O bound tasks
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                futures = []
-                for entry in all_entries:
-                    for fmt in formats:
-                        futures.append(executor.submit(export_task, entry, fmt))
-                
-                for future in concurrent.futures.as_completed(futures):
-                    success, msg = future.result()
-                    completed += 1
-                    if success: success_count += 1
-                    
-                    self.after(0, lambda m=msg: window_ref.log(m))
-                    self.after(0, lambda c=completed, t=total_tasks: window_ref.update_progress(c, t))
-
-            self.after(0, lambda: window_ref.log(f"\n✨ 작업 완료! (성공: {success_count} / 전체: {total_tasks})"))
-            self.after(0, lambda: window_ref.btn_start.configure(state="normal", text="작업 완료"))
-
-        threading.Thread(target=run_executor, daemon=True).start()
+    def save_preset_dialog(self):
+        dialog = ctk.CTkInputDialog(text="새로운 프리셋 이름을 입력하세요:", title="프리셋 저장")
+        name = dialog.get_input()
+        if name:
+            self.presets[name] = self.capture_ui_state()
+            try:
+                with open(self.presets_path, "w", encoding="utf-8") as f: 
+                    json.dump(self.presets, f, indent=4)
+                self.option_presets.configure(values=list(self.presets.keys()))
+                self.option_presets.set(name)
+            except Exception as e: print(f"Error saving preset: {e}")
 
 class MagnifierWindow(ctk.CTkToplevel):
     def __init__(self, parent):
@@ -1350,53 +805,36 @@ class MagnifierWindow(ctk.CTkToplevel):
         self.title("🔍 Pixel Magnifier")
         self.geometry("300x380")
         self.attributes("-topmost", True)
-        
         self.parent = parent
-        
-        # Display Area
         self.display_label = ctk.CTkLabel(self, text="", width=280, height=280, fg_color="black", corner_radius=10)
         self.display_label.pack(pady=10, padx=10)
-        
-        # Zoom Controls
-        control_frame = ctk.CTkFrame(self, fg_color="transparent")
-        control_frame.pack(pady=5, fill="x", padx=10)
-        
-        ctk.CTkButton(control_frame, text="-", width=40, command=self.zoom_out).pack(side="left", padx=5)
-        self.label_zoom = ctk.CTkLabel(control_frame, text=f"{self.parent.mag_zoom}x", font=("Arial", 16, "bold"))
+        f = ctk.CTkFrame(self, fg_color="transparent")
+        f.pack(pady=5, fill="x", padx=10)
+        ctk.CTkButton(f, text="-", width=40, command=self.zoom_out).pack(side="left", padx=5)
+        self.label_zoom = ctk.CTkLabel(f, text=f"{self.parent.mag_zoom}x", font=("Arial", 16, "bold"))
         self.label_zoom.pack(side="left", expand=True)
-        ctk.CTkButton(control_frame, text="+", width=40, command=self.zoom_in).pack(side="left", padx=5)
-        
-        ctk.CTkLabel(self, text="Mouse over preview area", font=("Arial", 10, "italic")).pack(pady=5)
-
+        ctk.CTkButton(f, text="+", width=40, command=self.zoom_in).pack(side="left", padx=5)
+    
     def zoom_in(self):
-        if self.parent.mag_zoom < 16:
+        if self.parent.mag_zoom < 16: 
             self.parent.mag_zoom += 1
             self.label_zoom.configure(text=f"{self.parent.mag_zoom}x")
-
+    
     def zoom_out(self):
-        if self.parent.mag_zoom > 2:
+        if self.parent.mag_zoom > 2: 
             self.parent.mag_zoom -= 1
             self.label_zoom.configure(text=f"{self.parent.mag_zoom}x")
+    
+    def update_zoom(self, img, pos, z):
+        sz = max(1, int(280 / z))
+        sx, sy = pos
+        l, t = max(0, sx - sz // 2), max(0, sy - sz // 2)
+        r, b = min(img.size[0], l + sz), min(img.size[1], t + sz)
+        crop = img.crop((l, t, r, b)).resize((280, 280), Image.NEAREST)
+        ci = ctk.CTkImage(light_image=crop, dark_image=crop, size=(280, 280))
+        self.display_label.configure(image=ci, text="")
+        self.display_label.image = ci
 
-    def update_zoom(self, full_image, center_pos, zoom_level):
-        mag_display_size = (280, 280)
-        source_area_size = max(1, int(mag_display_size[0] / zoom_level))
-        
-        iw, ih = full_image.size
-        src_x, src_y = center_pos
-        
-        left = max(0, src_x - source_area_size // 2)
-        top = max(0, src_y - source_area_size // 2)
-        right = min(iw, left + source_area_size)
-        bottom = min(ih, top + source_area_size)
-        
-        crop = full_image.crop((left, top, right, bottom))
-        crop_rescaled = crop.resize(mag_display_size, Image.NEAREST)
-        
-        ctk_mag = ctk.CTkImage(light_image=crop_rescaled, dark_image=crop_rescaled, size=mag_display_size)
-        self.display_label.configure(image=ctk_mag, text="")
-        self.display_label.image = ctk_mag
-
-if __name__ == "__main__":
+if __name__ == "__main__": 
     app = PixelApp()
     app.mainloop()

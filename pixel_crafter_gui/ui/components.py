@@ -734,3 +734,62 @@ class BatchExportWindow(ctk.CTkToplevel):
         self.progress_label.configure(text=f"진행 중: {current} / {total}")
         self.update_idletasks()
 
+class PluginWindow(ctk.CTkToplevel):
+    """
+    A window to manage installed plugins (Enable/Disable).
+    """
+    def __init__(self, parent, plugin_engine, on_change_callback):
+        super().__init__(parent)
+        self.title("플러그인 관리 (Plugin Manager)")
+        self.geometry("500x400")
+        self.resizable(False, False)
+        self.plugin_engine = plugin_engine
+        self.on_change_callback = on_change_callback
+        
+        self.transient(parent)
+        self.grab_set()
+
+        ctk.CTkLabel(self, text="🔌 설치된 플러그인", font=("Arial", 20, "bold")).pack(pady=20)
+
+        self.scroll_frame = ctk.CTkScrollableFrame(self, width=450, height=250)
+        self.scroll_frame.pack(pady=10, padx=20, fill="both", expand=True)
+
+        self.load_plugins()
+
+    def load_plugins(self):
+        for widget in self.scroll_frame.winfo_children():
+            widget.destroy()
+
+        plugins = self.plugin_engine.plugins
+        if not plugins:
+            ctk.CTkLabel(self.scroll_frame, text="설치된 플러그인이 없습니다.", font=("Arial", 12, "italic")).pack(pady=20)
+            return
+
+        for p_id, p_data in plugins.items():
+            meta = p_data["metadata"]
+            
+            item_frame = ctk.CTkFrame(self.scroll_frame, fg_color="#2a2a2a", corner_radius=8)
+            item_frame.pack(fill="x", pady=5, padx=5)
+            
+            info_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
+            info_frame.pack(side="left", padx=10, pady=10, fill="x", expand=True)
+            
+            ctk.CTkLabel(info_frame, text=f"{meta.get('name')} v{meta.get('version')}", 
+                         font=("Arial", 14, "bold"), anchor="w").pack(fill="x")
+            ctk.CTkLabel(info_frame, text=meta.get("description"), 
+                         font=("Arial", 11), text_color="#aaa", anchor="w").pack(fill="x")
+            
+            # Switch to enable/disable
+            switch_var = ctk.BooleanVar(value=p_data["enabled"])
+            switch = ctk.CTkSwitch(item_frame, text="", variable=switch_var, 
+                                   command=lambda id=p_id, var=switch_var: self.toggle_plugin(id, var))
+            switch.pack(side="right", padx=15)
+
+    def toggle_plugin(self, plugin_id, var):
+        enabled = var.get()
+        if plugin_id in self.plugin_engine.plugins:
+            self.plugin_engine.plugins[plugin_id]["enabled"] = enabled
+            print(f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'}")
+            if self.on_change_callback:
+                self.on_change_callback()
+

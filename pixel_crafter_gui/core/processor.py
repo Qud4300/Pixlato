@@ -75,7 +75,7 @@ def remove_background(img, tolerance=50):
         print(f"Background Remove Error: {e}")
         return img
 
-def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False, edge_sensitivity=1.0, downsample_method="Standard", remove_bg=False):
+def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False, edge_sensitivity=1.0, downsample_method="Standard", remove_bg=False, plugin_engine=None, plugin_params=None):
     """
     Opens an image and reduces its resolution.
     
@@ -87,6 +87,8 @@ def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False
         edge_sensitivity: Strength of edge enhancement (0.0 to 2.0).
         downsample_method: One of "Standard", "Local Extrema", "K-Means", "Minority Emphasis".
         remove_bg: If True, attempts to remove background color.
+        plugin_engine: Optional PluginEngine instance for hook execution.
+        plugin_params: Parameters for plugins.
     
     Returns:
         Image: The small raw pixel image.
@@ -98,6 +100,10 @@ def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False
         print(f"Error opening image: {e}")
         return None
 
+    # [Hook] PRE_PROCESS
+    if plugin_engine:
+        img = plugin_engine.execute_hook("PRE_PROCESS", img, plugin_params)
+
     # Apply Background Removal if requested
     if remove_bg:
         img = remove_background(img, tolerance=40)
@@ -105,6 +111,10 @@ def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False
     # Apply edge enhancement if requested (before downsampling)
     if edge_enhance and edge_sensitivity > 0:
         img = enhance_internal_edges(img, edge_sensitivity)
+
+    # [Hook] PRE_DOWNSAMPLE
+    if plugin_engine:
+        img = plugin_engine.execute_hook("PRE_DOWNSAMPLE", img, plugin_params)
 
     original_width, original_height = img.size
     
@@ -123,6 +133,10 @@ def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False
     else:
         # Standard BOX
         small_img = img.resize((small_width, small_height), resample=Image.BOX)
+
+    # [Hook] POST_DOWNSAMPLE
+    if plugin_engine:
+        small_img = plugin_engine.execute_hook("POST_DOWNSAMPLE", small_img, plugin_params)
 
     return small_img
 
