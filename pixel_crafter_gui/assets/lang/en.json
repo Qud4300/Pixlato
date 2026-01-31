@@ -15,7 +15,7 @@
     "sidebar_dithering": "Dithering",
     "sidebar_visual_effects": "Visual Effects:",
     "sidebar_remove_bg": "Background Removal",
-    "sidebar_bg_mode": "Removal Mode:",
+    "sidebar_bg_mode": "Background Removal:",
     "bg_none": "None",
     "bg_classic": "Classic (Corner)",
     "bg_ai": "AI Auto",

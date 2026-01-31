@@ -15,7 +15,7 @@
     "sidebar_dithering": "디더링 (Dithering)",
     "sidebar_visual_effects": "비주얼 효과:",
     "sidebar_remove_bg": "배경 제거",
-    "sidebar_bg_mode": "제거 모드:",
+    "sidebar_bg_mode": "배경 제거:",
     "bg_none": "없음 (None)",
     "bg_classic": "모서리 (Classic)",
     "bg_ai": "AI 자동 (Auto)",
