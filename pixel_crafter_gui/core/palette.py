@@ -39,7 +39,7 @@ def export_as_gpl(path, colors, name="Pixlato Export"):
 
 def extract_aesthetic_palette(img, color_count=16, w_sat=0.4, w_con=0.3, w_rar=0.3):
     """
-    Optimized RAP Extraction: Scores pixels by Saturation, Contrast, and Uniqueness.
+    Optimized Weighted Extraction: Scores pixels by Saturation, Contrast, and Uniqueness.
     Uses downsampling for analysis speed and vectorized operations.
     """
     # 1. Performance Optimization: Resize for analysis if image is large
@@ -124,7 +124,7 @@ def apply_palette_unified(img, palette_name="Original", custom_colors=None, dith
                           extract_policy="Standard", mapping_policy="Classic",
                           w_sat=0.4, w_con=0.3, w_rar=0.3):
     """
-    Updated Pipeline supporting RAP extraction and Perceptual mapping.
+    Updated Pipeline supporting Weighted extraction and Perceptual mapping.
     """
     if img.mode != "RGBA":
         img = img.convert("RGBA")
