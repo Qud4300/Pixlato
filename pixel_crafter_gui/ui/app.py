@@ -218,7 +218,8 @@ class PixelApp(ctk.CTk):
         self.label_extract_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w")
         self.label_extract_policy.pack(pady=(10, 0), fill="x")
         self.locale.register(self.label_extract_policy, "sidebar_extract_policy")
-        self.extract_policy_switch = ctk.CTkSegmentedButton(self.param_frame, values=[self.locale.get("policy_standard"), self.locale.get("policy_aesthetic")], command=self.on_param_change)
+        self.extract_policy_switch = ctk.CTkSegmentedButton(self.param_frame, values=[self.locale.get("policy_standard"), self.locale.get("policy_aesthetic")], 
+                                                           command=lambda v: self.on_palette_menu_change(self.option_palette.get()))
         self.extract_policy_switch.set(self.locale.get("policy_standard"))
         self.extract_policy_switch.pack(pady=5, fill="x")
         self.theme_manager.register_widget(self.extract_policy_switch)
@@ -230,6 +231,28 @@ class PixelApp(ctk.CTk):
         self.mapping_policy_switch.set(self.locale.get("policy_classic"))
         self.mapping_policy_switch.pack(pady=5, fill="x")
         self.theme_manager.register_widget(self.mapping_policy_switch)
+
+        # RAP Weights Sliders
+        self.rap_frame = ctk.CTkFrame(self.param_frame, fg_color="transparent")
+        self.label_rap_header = ctk.CTkLabel(self.rap_frame, text="", anchor="w", font=("Arial", 11, "bold"))
+        self.label_rap_header.pack(pady=(10, 0), fill="x")
+        self.locale.register(self.label_rap_header, "sidebar_rap_weights")
+        
+        self.rap_weights = {}
+        for key, lang_key in [("sat", "weight_sat"), ("con", "weight_con"), ("rar", "weight_rar")]:
+            f = ctk.CTkFrame(self.rap_frame, fg_color="transparent")
+            f.pack(fill="x", pady=2)
+            lbl = ctk.CTkLabel(f, text="", anchor="w", font=("Arial", 10))
+            lbl.pack(side="left")
+            self.locale.register(lbl, lang_key)
+            val_lbl = ctk.CTkLabel(f, text="0.4" if key=="sat" else "0.3", width=30, font=("Arial", 10))
+            val_lbl.pack(side="right")
+            sld = ctk.CTkSlider(self.rap_frame, from_=0, to=1.0, number_of_steps=20, height=16,
+                                command=lambda v, l=val_lbl: [l.configure(text=f"{v:.2f}"), self.on_param_change()])
+            sld.set(0.4 if key=="sat" else 0.3)
+            sld.pack(fill="x")
+            self.theme_manager.register_widget(sld)
+            self.rap_weights[key] = (sld, val_lbl)
 
         self.btn_custom_pal = ctk.CTkButton(self.param_frame, text="", command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
         self.btn_custom_pal.pack(pady=5, fill="x")
@@ -479,8 +502,25 @@ class PixelApp(ctk.CTk):
         except Exception as e: print(f"Error project load: {e}")
 
     def on_palette_menu_change(self, value):
-        if value in ["Original", "GameBoy", "CGA", "Pico-8", "USER CUSTOM", "16-bit (4096 Colors)"]: self.color_limit_group.pack_forget()
-        else: self.color_limit_group.pack(after=self.slider_pixel, fill="x")
+        if value in ["Original", "GameBoy", "CGA", "Pico-8", "USER CUSTOM", "16-bit (4096 Colors)"]:
+            self.color_limit_group.pack_forget()
+            self.label_extract_policy.pack_forget()
+            self.extract_policy_switch.pack_forget()
+            self.rap_frame.pack_forget()
+        else:
+            # Limited or Grayscale
+            self.color_limit_group.pack(after=self.option_palette, pady=5, fill="x")
+            if value == "Limited":
+                self.label_extract_policy.pack(after=self.color_limit_group, pady=(10, 0), fill="x")
+                self.extract_policy_switch.pack(after=self.label_extract_policy, pady=5, fill="x")
+                if self._get_logical(self.extract_policy_switch.get(), "extract_policy") == "Aesthetic":
+                    self.rap_frame.pack(after=self.extract_policy_switch, fill="x")
+                else:
+                    self.rap_frame.pack_forget()
+            else:
+                self.label_extract_policy.pack_forget()
+                self.extract_policy_switch.pack_forget()
+                self.rap_frame.pack_forget()
         self.active_palette_mode = "Custom_User" if value == "USER CUSTOM" else ("Custom_16bit" if value == "16-bit (4096 Colors)" else "Standard")
         self.on_param_change()
 
@@ -556,6 +596,64 @@ class PixelApp(ctk.CTk):
         return m.get(cat, {}).get(val, val)
 
     def capture_ui_state(self):
+        return {
+            "save_mode": self._get_logical(self.mode_switch.get(), "save_mode"), 
+            "pixel_size": int(self.pixel_spin.get()), 
+            "color_count": int(self.color_spinbox.get()), 
+            "palette_mode": self.option_palette.get(), 
+            "extract_policy": self._get_logical(self.extract_policy_switch.get(), "extract_policy"),
+            "mapping_policy": self._get_logical(self.mapping_policy_switch.get(), "mapping_policy"),
+            "rap_w_sat": float(self.rap_weights["sat"][0].get()),
+            "rap_w_con": float(self.rap_weights["con"][0].get()),
+            "rap_w_rar": float(self.rap_weights["rar"][0].get()),
+            "dither": self.check_dither.get(), 
+            "remove_bg": self.check_remove_bg.get(), 
+            "outline": self.check_outline.get(), 
+            "edge_enhance": self.check_edge_enhance.get(), 
+            "edge_sensitivity": float(self.slider_edge_sens.get()), 
+            "downsample_method": self._get_logical(self.option_downsample.get(), "downsample"), 
+            "custom_colors": list(self.user_palette_colors_persistent)
+        }
+
+    def restore_ui_state(self, params):
+        if not params: return
+        try:
+            if "save_mode" in params: self.mode_switch.set(self._get_display(params["save_mode"], "save_mode"))
+            if "pixel_size" in params: 
+                self.slider_pixel.set(params["pixel_size"])
+                self.pixel_spin.set(params["pixel_size"])
+            if "color_count" in params: 
+                self.color_slider.set(params["color_count"])
+                self.color_spinbox.set(params["color_count"])
+            if "palette_mode" in params: 
+                self.option_palette.set(params["palette_mode"])
+                self.on_palette_menu_change(params["palette_mode"])
+            if "extract_policy" in params: self.extract_policy_switch.set(self._get_display(params["extract_policy"], "extract_policy"))
+            if "mapping_policy" in params: self.mapping_policy_switch.set(self._get_display(params["mapping_policy"], "mapping_policy"))
+            
+            if "rap_w_sat" in params:
+                self.rap_weights["sat"][0].set(params["rap_w_sat"])
+                self.rap_weights["sat"][1].configure(text=f"{params['rap_w_sat']:.2f}")
+            if "rap_w_con" in params:
+                self.rap_weights["con"][0].set(params["rap_w_con"])
+                self.rap_weights["con"][1].configure(text=f"{params['rap_w_con']:.2f}")
+            if "rap_w_rar" in params:
+                self.rap_weights["rar"][0].set(params["rap_w_rar"])
+                self.rap_weights["rar"][1].configure(text=f"{params['rap_w_rar']:.2f}")
+
+            if "dither" in params: (self.check_dither.select() if params["dither"] else self.check_dither.deselect())
+            if "remove_bg" in params: (self.check_remove_bg.select() if params["remove_bg"] else self.check_remove_bg.deselect())
+            if "outline" in params: (self.check_outline.select() if params["outline"] else self.check_outline.deselect())
+            if "edge_enhance" in params: 
+                (self.check_edge_enhance.select() if params["edge_enhance"] else self.check_edge_enhance.deselect())
+                self.update_edge_controls_state()
+            if "edge_sensitivity" in params: 
+                self.slider_edge_sens.set(params["edge_sensitivity"])
+                self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
+            if "downsample_method" in params: self.option_downsample.set(self._get_display(params["downsample_method"], "downsample"))
+            if "custom_colors" in params: self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
+            self.on_param_change()
+        except Exception as e: print(f"Error restore: {e}")
         return {
             "save_mode": self._get_logical(self.mode_switch.get(), "save_mode"), 
             "pixel_size": int(self.pixel_spin.get()), 
@@ -680,9 +778,12 @@ class PixelApp(ctk.CTk):
                     return
                 
                 p_name, p_param = ("Custom_User", params["user_pal"]) if params["palette_choice"] == "USER CUSTOM" else (("Custom_16bit", None) if params["palette_choice"] == "16-bit (4096 Colors)" else (params["palette_choice"], params["color_count"]))
-                proc = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"], 
+                proc = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"],
                                              extract_policy=params.get("extract_policy", "Standard"),
-                                             mapping_policy=params.get("mapping_policy", "Classic"))
+                                             mapping_policy=params.get("mapping_policy", "Classic"),
+                                             w_sat=params.get("rap_w_sat", 0.4),
+                                             w_con=params.get("rap_w_con", 0.3),
+                                             w_rar=params.get("rap_w_rar", 0.3))
                 proc = self.plugin_engine.execute_hook("POST_PALETTE", proc, params)
                 if params["outline"]: proc = add_outline(proc)
                 proc = self.plugin_engine.execute_hook("FINAL_IMAGE", proc, params)

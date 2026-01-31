@@ -37,40 +37,62 @@ def export_as_gpl(path, colors, name="Pixlato Export"):
         print(f"Error exporting GPL: {e}")
         return False
 
-def extract_aesthetic_palette(img, color_count=16):
+def extract_aesthetic_palette(img, color_count=16, w_sat=0.4, w_con=0.3, w_rar=0.3):
     """
-    RAP Extraction: Scores pixels by Saturation, Contrast, and Uniqueness.
-    Returns a list of RGB tuples.
+    Optimized RAP Extraction: Scores pixels by Saturation, Contrast, and Uniqueness.
+    Uses downsampling for analysis speed and vectorized operations.
     """
-    # 1. Prepare data
-    img_rgb = img.convert("RGB")
+    # 1. Performance Optimization: Resize for analysis if image is large
+    # Palette extraction doesn't need 4K resolution. 256px is plenty.
+    analysis_size = 256
+    if max(img.size) > analysis_size:
+        img_analysis = img.resize((analysis_size, analysis_size), resample=Image.LANCZOS)
+    else:
+        img_analysis = img
+
+    img_rgb = img_analysis.convert("RGB")
     arr = np.array(img_rgb).astype(np.float32) / 255.0
     pixels = arr.reshape(-1, 3)
     
-    # 2. Calculate Scoring Components
+    # 2. Vectorized Scoring Components
     # Saturation (max - min)
-    sats = np.max(pixels, axis=1) - np.min(pixels, axis=1)
-    # Brightness (Value in HSV)
-    vals = np.max(pixels, axis=1)
+    c_max = np.max(pixels, axis=1)
+    c_min = np.min(pixels, axis=1)
+    sats = c_max - c_min
+    
+    # Brightness (Value)
+    vals = c_max
+    
     # Contrast Score: High weight for very bright or dark
     contrast = np.abs(vals - 0.5) * 2.0
     
-    # Uniqueness: Simple Hue binning to find rare colors
-    hsv_pixels = np.array([colorsys.rgb_to_hsv(*p) for p in pixels])
-    hues = hsv_pixels[:, 0]
-    h_hist, _ = np.histogram(hues, bins=36, range=(0, 1))
-    # Normalize histogram to find rarity (1 / frequency)
-    rarity = 1.0 / (h_hist[np.clip((hues * 36).astype(int), 0, 35)] + 1.0)
-    rarity = rarity / np.max(rarity)
+    # Uniqueness (Vectorized Hue Calculation)
+    # Simplified Hue calculation: (G-B)/(max-min) etc.
+    diff = sats + 1e-6
+    r, g, b = pixels[:, 0], pixels[:, 1], pixels[:, 2]
     
-    # 3. Final Importance Score
-    # Weight: Saturation(40%) + Contrast(30%) + Uniqueness(30%)
-    scores = (sats * 0.4) + (contrast * 0.3) + (rarity * 0.3)
+    h = np.zeros_like(r)
+    idx_r = (c_max == r)
+    h[idx_r] = (g[idx_r] - b[idx_r]) / diff[idx_r]
+    idx_g = (c_max == g)
+    h[idx_g] = 2.0 + (b[idx_g] - r[idx_g]) / diff[idx_g]
+    idx_b = (c_max == b)
+    h[idx_b] = 4.0 + (r[idx_b] - g[idx_b]) / diff[idx_b]
+    h = (h / 6.0) % 1.0
+    
+    h_hist, _ = np.histogram(h, bins=36, range=(0, 1))
+    rarity = 1.0 / (h_hist[np.clip((h * 36).astype(int), 0, 35)] + 1.0)
+    rarity = rarity / (np.max(rarity) + 1e-6)
+    
+    # 3. Final Importance Score with User Weights
+    scores = (sats * w_sat) + (contrast * w_con) + (rarity * w_rar)
     
     # 4. Selection with Suppression (to ensure variety)
     selected_indices = []
     current_scores = scores.copy()
     
+    # Limit candidates to speed up suppression loop if needed
+    # (But with 256x256=65k pixels, it's already fast enough)
     for _ in range(color_count):
         best_idx = np.argmax(current_scores)
         if current_scores[best_idx] <= 0: break
@@ -79,9 +101,10 @@ def extract_aesthetic_palette(img, color_count=16):
         selected_indices.append(best_idx)
         
         # Suppress nearby colors in RGB space
-        diffs = np.linalg.norm(pixels - best_color, axis=1)
-        # Suppress everything within 15% distance
-        suppression = np.clip(diffs / 0.15, 0, 1)
+        # Using squared distance for speed
+        sq_diffs = np.sum((pixels - best_color)**2, axis=1)
+        # Suppress everything within 0.15 distance (0.0225 squared)
+        suppression = np.clip(sq_diffs / 0.0225, 0, 1)
         current_scores *= suppression
         
     res_rgb = [(int(p[0]*255), int(p[1]*255), int(p[2]*255)) for p in pixels[selected_indices]]
@@ -97,7 +120,9 @@ def map_to_palette_perceptual(img, palette_img):
     perceptual_boosted = enhancer.enhance(1.2) # Boost saturation by 20% during mapping
     return perceptual_boosted.quantize(palette=palette_img, dither=Image.Dither.NONE)
 
-def apply_palette_unified(img, palette_name="Original", custom_colors=None, dither=True, extract_policy="Standard", mapping_policy="Classic"):
+def apply_palette_unified(img, palette_name="Original", custom_colors=None, dither=True, 
+                          extract_policy="Standard", mapping_policy="Classic",
+                          w_sat=0.4, w_con=0.3, w_rar=0.3):
     """
     Updated Pipeline supporting RAP extraction and Perceptual mapping.
     """
@@ -116,7 +141,8 @@ def apply_palette_unified(img, palette_name="Original", custom_colors=None, dith
     
     if palette_name == "Limited":
         if extract_policy == "Aesthetic":
-            colors = extract_aesthetic_palette(rgb_img, custom_colors if isinstance(custom_colors, int) else 16)
+            colors = extract_aesthetic_palette(rgb_img, custom_colors if isinstance(custom_colors, int) else 16,
+                                              w_sat=w_sat, w_con=w_con, w_rar=w_rar)
             # Create palette image from custom list
             flat = []
             for c in colors: flat.extend(c)
