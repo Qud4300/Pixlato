@@ -152,3 +152,4 @@ cython_debug/
 # Project specific
 temp_image/
 agent_docs/
+TEST_ENV/
