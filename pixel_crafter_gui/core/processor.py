@@ -219,13 +219,33 @@ def downsample_kmeans_adaptive(img, pixel_size, out_w, out_h):
     result_arr = result_tensor.reshape(out_h, out_w, 4).byte().cpu().numpy()
     return Image.fromarray(result_arr, "RGBA")
 
+# Global session cache for rembg to avoid reloading the model
+REMBG_SESSION = None
+
 def remove_background_ai(img):
     """
     Uses rembg (AI model) to automatically extract the main subject.
+    Utilizes GPU (CUDA) if available for maximum performance.
     """
+    global REMBG_SESSION
     try:
-        from rembg import remove
-        return remove(img)
+        from rembg import remove, new_session
+        import onnxruntime as ort
+        
+        # Initialize session if it doesn't exist
+        if REMBG_SESSION is None:
+            # Check for GPU providers
+            providers = ort.get_available_providers()
+            target_providers = []
+            if 'CUDAExecutionProvider' in providers:
+                target_providers.append('CUDAExecutionProvider')
+            if 'CPUExecutionProvider' in providers:
+                target_providers.append('CPUExecutionProvider')
+            
+            # Use u2net (standard) but we could use u2netp for even more speed if needed
+            REMBG_SESSION = new_session(model_name="u2net", providers=target_providers)
+            
+        return remove(img, session=REMBG_SESSION)
     except Exception as e:
         print(f"AI Background Removal Error: {e}")
         return img
