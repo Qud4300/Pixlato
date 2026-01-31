@@ -58,7 +58,9 @@ class ImageManager:
                         "name": f"{name_base}_{i}",
                         "pil_image": frame_copy,
                         "thumbnail": self._create_thumbnail(frame_copy),
-                        "params": embedded_params # Assign embedded parameters
+                        "params": embedded_params, # Assign embedded parameters
+                        "bg_processed_image": None,
+                        "last_bg_params": None
                     }
                     self.images.append(entry)
                     added_ids.append(self._next_id)
@@ -72,7 +74,9 @@ class ImageManager:
                     "name": name_base,
                     "pil_image": img_rgba,
                     "thumbnail": self._create_thumbnail(img_rgba),
-                    "params": embedded_params # Assign embedded parameters
+                    "params": embedded_params, # Assign embedded parameters
+                    "bg_processed_image": None,
+                    "last_bg_params": None
                 }
                 self.images.append(entry)
                 added_ids.append(self._next_id)

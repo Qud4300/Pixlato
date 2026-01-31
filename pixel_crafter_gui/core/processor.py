@@ -75,28 +75,13 @@ def remove_background(img, tolerance=50):
         print(f"Background Remove Error: {e}")
         return img
 
-def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False, edge_sensitivity=1.0, downsample_method="Standard", remove_bg=False, bg_mode="None", bg_seeds=None, fg_seeds=None, plugin_engine=None, plugin_params=None):
+def pixelate_image(img, pixel_size, target_width=None, edge_enhance=False, edge_sensitivity=1.0, downsample_method="Standard", plugin_engine=None, plugin_params=None):
     """
-    Opens an image and reduces its resolution with advanced background removal.
+    Processes a PIL image and reduces its resolution.
+    Expects 'img' to be a PIL Image (RGBA).
     """
-    try:
-        # Open as RGBA
-        img = Image.open(image_path).convert("RGBA")
-    except Exception as e:
-        print(f"Error opening image: {e}")
+    if img is None:
         return None
-
-    # [Hook] PRE_PROCESS
-    if plugin_engine:
-        img = plugin_engine.execute_hook("PRE_PROCESS", img, plugin_params)
-
-    # Apply Advanced Background Removal
-    if bg_mode == "AI Auto":
-        img = remove_background_ai(img)
-    elif bg_mode == "Interactive" and bg_seeds:
-        img = remove_background_interactive(img, bg_seeds, fg_seeds)
-    elif bg_mode == "Classic" or remove_bg:
-        img = remove_background(img, tolerance=40)
 
     # Apply edge enhancement if requested (before downsampling)
     if edge_enhance and edge_sensitivity > 0:
@@ -108,14 +93,9 @@ def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False
 
     original_width, original_height = img.size
     
-    if target_width:
-        aspect_ratio = original_height / original_width
-        small_width = target_width
-        small_height = int(small_width * aspect_ratio)
-    else:
-        # Ensure at least 1x1
-        small_width = max(1, original_width // pixel_size)
-        small_height = max(1, original_height // pixel_size)
+    # Ensure at least 1x1
+    small_width = max(1, original_width // pixel_size)
+    small_height = max(1, original_height // pixel_size)
 
     # Select downsampling method
     if downsample_method == "K-Means":
@@ -229,8 +209,32 @@ def remove_background_ai(img):
     """
     global REMBG_SESSION
     try:
-        from rembg import remove, new_session
         import onnxruntime as ort
+        import sys
+        
+        # Windows CUDA Library Path Patch
+        if sys.platform == "win32":
+            import os
+            # Try to find nvidia runtime libs in site-packages
+            venv_base = os.path.dirname(os.path.dirname(sys.executable))
+            site_packages = os.path.join(venv_base, "Lib", "site-packages")
+            
+            # Common paths for the installed nvidia-*-cu12 packages
+            lib_paths = [
+                os.path.join(site_packages, "nvidia", "cuda_runtime", "bin"),
+                os.path.join(site_packages, "nvidia", "cublas", "bin"),
+                os.path.join(site_packages, "nvidia", "cudnn", "bin"),
+                os.path.join(site_packages, "nvidia", "cufft", "bin"),
+                os.path.join(site_packages, "nvidia", "curand", "bin"),
+                os.path.join(site_packages, "nvidia", "cusolver", "bin"),
+                os.path.join(site_packages, "nvidia", "cusparse", "bin")
+            ]
+            
+            for p in lib_paths:
+                if os.path.exists(p) and p not in os.environ["PATH"]:
+                    os.environ["PATH"] = p + os.pathsep + os.environ["PATH"]
+
+        from rembg import remove, new_session
         
         # Initialize session if it doesn't exist
         if REMBG_SESSION is None:

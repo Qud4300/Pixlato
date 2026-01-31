@@ -790,49 +790,60 @@ class PixelApp(ctk.CTk):
         self._is_processing = True
         self.status_label.configure(text=self.locale.get("status_processing"))
         self.btn_save.configure(state="disabled")
+        
+        # Capture current UI state and ID
         params = self.capture_ui_state()
         params["user_pal"] = self.user_palette_colors_persistent
         params["palette_choice"] = params["palette_mode"]
+        item_id = self.current_inventory_id
 
         def run():
             try:
+                # 1. Get Base Image (RGBA)
                 if source_type == "path":
-                    with Image.open(source_data) as tmp: self.original_size = tmp.size
-                    raw = pixelate_image(source_data, params["pixel_size"], 
-                                         edge_enhance=params["edge_enhance"], 
-                                         edge_sensitivity=params["edge_sensitivity"], 
-                                         downsample_method=params["downsample_method"], 
-                                         remove_bg=False, # Handled by bg_mode now
-                                         bg_mode=params.get("bg_mode", "None"),
-                                         bg_seeds=params.get("bg_seeds"),
-                                         fg_seeds=params.get("fg_seeds"),
-                                         plugin_engine=self.plugin_engine, 
-                                         plugin_params=params)
+                    img = Image.open(source_data).convert("RGBA")
                 else:
                     img = source_data.convert("RGBA")
-                    self.original_size = img.size
-                    img = self.plugin_engine.execute_hook("PRE_PROCESS", img, params)
+                
+                self.original_size = img.size
+                
+                # 2. Check Background Removal Cache
+                img_no_bg = None
+                current_bg_params = {
+                    "bg_mode": params.get("bg_mode", "None"),
+                    "bg_seeds": params.get("bg_seeds", []),
+                    "fg_seeds": params.get("fg_seeds", [])
+                }
+                
+                entry = self.image_manager.get_image(item_id) if item_id is not None else None
+                
+                if entry and entry["bg_processed_image"] is not None and entry["last_bg_params"] == current_bg_params:
+                    # Use Cache
+                    img_no_bg = entry["bg_processed_image"]
+                else:
+                    # Execute Background Removal (Heavy Task)
+                    img_no_bg = self.plugin_engine.execute_hook("PRE_PROCESS", img, params)
                     
-                    # Apply Advanced Background Removal
-                    bg_m = params.get("bg_mode", "None")
+                    bg_m = current_bg_params["bg_mode"]
                     if bg_m == "AI Auto":
-                        img = remove_background_ai(img)
-                    elif bg_m == "Interactive" and params.get("bg_seeds"):
-                        img = remove_background_interactive(img, params.get("bg_seeds"), params.get("fg_seeds"))
+                        img_no_bg = remove_background_ai(img_no_bg)
+                    elif bg_m == "Interactive" and current_bg_params["bg_seeds"]:
+                        img_no_bg = remove_background_interactive(img_no_bg, current_bg_params["bg_seeds"], current_bg_params["fg_seeds"])
                     elif bg_m == "Classic":
-                        img = remove_background(img, tolerance=40)
-                        
-                    if params["edge_enhance"]: 
-                        from core.processor import enhance_internal_edges
-                        img = enhance_internal_edges(img, params["edge_sensitivity"])
-                    img = self.plugin_engine.execute_hook("PRE_DOWNSAMPLE", img, params)
-                    sw, sh = max(1, img.size[0] // params["pixel_size"]), max(1, img.size[1] // params["pixel_size"])
-                    if params["downsample_method"] == "K-Means":
-                        from core.processor import downsample_kmeans_adaptive
-                        raw = downsample_kmeans_adaptive(img, params["pixel_size"], sw, sh)
-                    else: 
-                        raw = img.resize((sw, sh), resample=Image.BOX)
-                    raw = self.plugin_engine.execute_hook("POST_DOWNSAMPLE", raw, params)
+                        img_no_bg = remove_background(img_no_bg, tolerance=40)
+                    
+                    # Update Cache
+                    if entry:
+                        entry["bg_processed_image"] = img_no_bg
+                        entry["last_bg_params"] = current_bg_params.copy()
+
+                # 3. Rest of the Pipeline (Light Tasks)
+                raw = pixelate_image(img_no_bg, params["pixel_size"], 
+                                     edge_enhance=params["edge_enhance"], 
+                                     edge_sensitivity=params["edge_sensitivity"], 
+                                     downsample_method=params["downsample_method"], 
+                                     plugin_engine=self.plugin_engine, 
+                                     plugin_params=params)
 
                 if not raw: 
                     self.after(0, self._on_processing_complete, None)
@@ -1060,18 +1071,31 @@ class PixelApp(ctk.CTk):
 
         def process_frame_layered(e, target_params):
             p = target_params
-            img = e["pil_image"].convert("RGBA")
             
-            # Apply Advanced Background Removal in Batch
-            bg_m = p.get("bg_mode", "None")
-            if bg_m == "AI Auto":
-                from core.processor import remove_background_ai
-                img = remove_background_ai(img)
-            elif bg_m == "Interactive" and p.get("bg_seeds"):
-                from core.processor import remove_background_interactive
-                img = remove_background_interactive(img, p.get("bg_seeds"), p.get("fg_seeds"))
-            elif bg_m == "Classic":
-                img = remove_background(img, tolerance=40)
+            # Use Background Removal Cache if available and params match
+            current_bg_params = {
+                "bg_mode": p.get("bg_mode", "None"),
+                "bg_seeds": p.get("bg_seeds", []),
+                "fg_seeds": p.get("fg_seeds", [])
+            }
+            
+            if e.get("bg_processed_image") is not None and e.get("last_bg_params") == current_bg_params:
+                img = e["bg_processed_image"]
+            else:
+                img = e["pil_image"].convert("RGBA")
+                bg_m = current_bg_params["bg_mode"]
+                if bg_m == "AI Auto":
+                    from core.processor import remove_background_ai
+                    img = remove_background_ai(img)
+                elif bg_m == "Interactive" and current_bg_params["bg_seeds"]:
+                    from core.processor import remove_background_interactive
+                    img = remove_background_interactive(img, current_bg_params["bg_seeds"], current_bg_params["fg_seeds"])
+                elif bg_m == "Classic":
+                    img = remove_background(img, tolerance=40)
+                
+                # Update cache for future use
+                e["bg_processed_image"] = img
+                e["last_bg_params"] = current_bg_params.copy()
                 
             if p.get("edge_enhance"): from core.processor import enhance_internal_edges; img = enhance_internal_edges(img, p["edge_sensitivity"])
             sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
