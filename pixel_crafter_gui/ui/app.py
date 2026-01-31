@@ -778,17 +778,6 @@ class PixelApp(ctk.CTk):
     def process_inventory_image(self, pil_image): 
         self._start_threaded_process("pil", pil_image)
 
-    def open_image(self):
-        f = filedialog.askopenfilename(parent=self, filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")])
-        if f:
-            try:
-                self.original_image_path = f
-                with Image.open(f) as img: self.original_size = img.size
-                self.preview_zoom = -1
-                self.process_image()
-                self.btn_save.configure(state="normal")
-            except Exception as e: messagebox.showerror("오류", f"이미지 로드 실패: {e}")
-
     def process_image(self):
         if self.original_image_path: 
             self._start_threaded_process("path", self.original_image_path)
@@ -875,6 +864,7 @@ class PixelApp(ctk.CTk):
     def _on_processing_complete(self, proc, prev=None):
         self._is_processing = False
         self.status_label.configure(text="")
+        
         if proc:
             self.raw_pixel_image, self.preview_image = proc, prev
             self.display_image()
@@ -885,6 +875,12 @@ class PixelApp(ctk.CTk):
                 rw, rh = proc.size if self._get_logical(self.mode_switch.get(), "save_mode") == "Pixelate" else self.original_size
                 self.res_label.configure(text=f"{rw} x {rh}")
             except: pass
+        else:
+            # If processing failed or was cancelled, we don't necessarily clear
+            # unless the inventory is empty.
+            if self.image_manager.count() == 0:
+                self.clear_preview()
+        
         if self._pending_reprocess: 
             self._pending_reprocess = False
             self._start_threaded_process(*self._pending_source)
@@ -989,23 +985,56 @@ class PixelApp(ctk.CTk):
         item.pack(fill="x", pady=3, padx=2)
         item.pack_propagate(False)
         self.inventory_widgets[fid] = item
+        
         thumb = e["thumbnail"]
         ctk_t = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=(50, 50))
-        tl = ctk.CTkLabel(item, image=ctk_t, text=""); tl.pack(side="left", padx=5, pady=5); tl.image = ctk_t
-        nl = ctk.CTkLabel(item, text=e["name"][:12], font=("Arial", 10), anchor="w"); nl.pack(side="left", fill="x", expand=True, padx=5)
-        db = ctk.CTkButton(item, text="X", width=20, height=20, fg_color="#e74c3c", command=lambda: self.remove_from_inventory(fid))
-        db.place(relx=1.0, rely=0, anchor="ne", x=-5, y=5); db.lower()
-        item.bind("<Enter>", lambda e: db.lift()); item.bind("<Leave>", lambda e: db.lower())
-        item.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
-        tl.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
-        nl.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
+        tl = ctk.CTkLabel(item, image=ctk_t, text="")
+        tl.pack(side="left", padx=5, pady=5)
+        tl.image = ctk_t
+        
+        nl = ctk.CTkLabel(item, text=e["name"][:12], font=("Arial", 10), anchor="w")
+        nl.pack(side="left", fill="x", expand=True, padx=5)
+        
+        # Delete button: Robust click handling
+        db = ctk.CTkButton(item, text="X", width=24, height=24, fg_color="#e74c3c", 
+                            hover_color="#c0392b", command=lambda i=fid: self.remove_from_inventory(i))
+        db.place(relx=1.0, rely=0, anchor="ne", x=-5, y=5)
+        
+        # Helper to select this item
+        def select_this(event=None):
+            self.select_inventory_image(fid)
+            
+        item.bind("<Button-1>", select_this)
+        tl.bind("<Button-1>", select_this)
+        nl.bind("<Button-1>", select_this)
 
     def remove_from_inventory(self, iid):
-        if iid in self.inventory_widgets: self.inventory_widgets[iid].destroy(); del self.inventory_widgets[iid]
-        self.image_manager.remove_image(iid); self.update_inventory_count_label()
-        if self.current_inventory_id == iid: 
+        if iid in self.inventory_widgets:
+            self.inventory_widgets[iid].destroy()
+            del self.inventory_widgets[iid]
+        
+        self.image_manager.remove_image(iid)
+        self.update_inventory_count_label()
+        
+        if self.current_inventory_id == iid:
             self.current_inventory_id = None
-            if self.image_manager.count() > 0: self.select_inventory_image(self.image_manager.get_all()[0]["id"])
+            if self.image_manager.count() > 0:
+                # Select the first available item
+                first_item = self.image_manager.get_all()[0]
+                self.select_inventory_image(first_item["id"])
+            else:
+                self.clear_preview()
+
+    def clear_preview(self):
+        self.raw_pixel_image = None
+        self.preview_image = None
+        self.original_image_path = None
+        self.current_inventory_id = None
+        self.preview_canvas.delete("all")
+        self.canvas_image_id = None
+        self.res_label.configure(text="0 x 0")
+        self.palette_inspector.update_colors([])
+        self.btn_save.configure(state="disabled")
 
     def export_used_palette_gpl(self):
         if not self.raw_pixel_image: return
