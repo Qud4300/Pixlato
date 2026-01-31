@@ -39,7 +39,7 @@
     "policy_standard": "Standard",
     "policy_aesthetic": "Weighted",
     "policy_classic": "Classic",
-    "policy_perceptual": "Perceptual",
+    "policy_perceptual": "Vibrant",
     "batch_formats": "Select Formats:",
     "batch_path": "Output Path:",
     "batch_spritesheet": "Sprite Sheet",

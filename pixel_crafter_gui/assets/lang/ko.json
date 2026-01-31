@@ -39,7 +39,7 @@
     "policy_standard": "표준 (Standard)",
     "policy_aesthetic": "가중치 추출",
     "policy_classic": "클래식 (Classic)",
-    "policy_perceptual": "지각적 (Perceptual)",
+    "policy_perceptual": "색채 강조",
     "batch_formats": "내보낼 포맷 선택:",
     "batch_path": "저장 경로:",
     "batch_spritesheet": "스프라이트 시트 (Sprite Sheet)",
