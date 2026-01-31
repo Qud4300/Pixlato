@@ -213,6 +213,24 @@ class PixelApp(ctk.CTk):
         self.option_palette.set("Limited")
         self.option_palette.pack(pady=5, fill="x")
         self.theme_manager.register_widget(self.option_palette)
+
+        # Extraction & Mapping Policies
+        self.label_extract_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_extract_policy.pack(pady=(10, 0), fill="x")
+        self.locale.register(self.label_extract_policy, "sidebar_extract_policy")
+        self.extract_policy_switch = ctk.CTkSegmentedButton(self.param_frame, values=[self.locale.get("policy_standard"), self.locale.get("policy_aesthetic")], command=self.on_param_change)
+        self.extract_policy_switch.set(self.locale.get("policy_standard"))
+        self.extract_policy_switch.pack(pady=5, fill="x")
+        self.theme_manager.register_widget(self.extract_policy_switch)
+
+        self.label_mapping_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_mapping_policy.pack(pady=(10, 0), fill="x")
+        self.locale.register(self.label_mapping_policy, "sidebar_mapping_policy")
+        self.mapping_policy_switch = ctk.CTkSegmentedButton(self.param_frame, values=[self.locale.get("policy_classic"), self.locale.get("policy_perceptual")], command=self.on_param_change)
+        self.mapping_policy_switch.set(self.locale.get("policy_classic"))
+        self.mapping_policy_switch.pack(pady=5, fill="x")
+        self.theme_manager.register_widget(self.mapping_policy_switch)
+
         self.btn_custom_pal = ctk.CTkButton(self.param_frame, text="", command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
         self.btn_custom_pal.pack(pady=5, fill="x")
         self.locale.register(self.btn_custom_pal, "sidebar_edit_custom_pal")
@@ -377,6 +395,8 @@ class PixelApp(ctk.CTk):
         # Update Segmented Buttons
         self.setting_mode_switch.configure(values=[self.locale.get("mode_global"), self.locale.get("mode_individual")])
         self.mode_switch.configure(values=[self.locale.get("save_pixelate"), self.locale.get("save_style")])
+        self.extract_policy_switch.configure(values=[self.locale.get("policy_standard"), self.locale.get("policy_aesthetic")])
+        self.mapping_policy_switch.configure(values=[self.locale.get("policy_classic"), self.locale.get("policy_perceptual")])
         
         # Update Option Menus (Values only, selected value remains mapped to logic)
         self.option_downsample.configure(values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")])
@@ -518,7 +538,9 @@ class PixelApp(ctk.CTk):
         m = {
             "save_mode": {self.locale.get("save_pixelate"): "Pixelate", self.locale.get("save_style"): "Style Only"},
             "downsample": {self.locale.get("opt_standard"): "Standard", self.locale.get("opt_kmeans"): "K-Means"},
-            "setting_mode": {self.locale.get("mode_global"): "Global", self.locale.get("mode_individual"): "Individual"}
+            "setting_mode": {self.locale.get("mode_global"): "Global", self.locale.get("mode_individual"): "Individual"},
+            "extract_policy": {self.locale.get("policy_standard"): "Standard", self.locale.get("policy_aesthetic"): "Aesthetic"},
+            "mapping_policy": {self.locale.get("policy_classic"): "Classic", self.locale.get("policy_perceptual"): "Perceptual"}
         }
         return m.get(cat, {}).get(val, val)
 
@@ -527,7 +549,9 @@ class PixelApp(ctk.CTk):
         m = {
             "save_mode": {"Pixelate": self.locale.get("save_pixelate"), "Style Only": self.locale.get("save_style")},
             "downsample": {"Standard": self.locale.get("opt_standard"), "K-Means": self.locale.get("opt_kmeans")},
-            "setting_mode": {"Global": self.locale.get("mode_global"), "Individual": self.locale.get("mode_individual")}
+            "setting_mode": {"Global": self.locale.get("mode_global"), "Individual": self.locale.get("mode_individual")},
+            "extract_policy": {"Standard": self.locale.get("policy_standard"), "Aesthetic": self.locale.get("policy_aesthetic")},
+            "mapping_policy": {"Classic": self.locale.get("policy_classic"), "Perceptual": self.locale.get("policy_perceptual")}
         }
         return m.get(cat, {}).get(val, val)
 
@@ -537,6 +561,8 @@ class PixelApp(ctk.CTk):
             "pixel_size": int(self.pixel_spin.get()), 
             "color_count": int(self.color_spinbox.get()), 
             "palette_mode": self.option_palette.get(), 
+            "extract_policy": self._get_logical(self.extract_policy_switch.get(), "extract_policy"),
+            "mapping_policy": self._get_logical(self.mapping_policy_switch.get(), "mapping_policy"),
             "dither": self.check_dither.get(), 
             "remove_bg": self.check_remove_bg.get(), 
             "outline": self.check_outline.get(), 
@@ -559,6 +585,8 @@ class PixelApp(ctk.CTk):
             if "palette_mode" in params: 
                 self.option_palette.set(params["palette_mode"])
                 self.on_palette_menu_change(params["palette_mode"])
+            if "extract_policy" in params: self.extract_policy_switch.set(self._get_display(params["extract_policy"], "extract_policy"))
+            if "mapping_policy" in params: self.mapping_policy_switch.set(self._get_display(params["mapping_policy"], "mapping_policy"))
             if "dither" in params: (self.check_dither.select() if params["dither"] else self.check_dither.deselect())
             if "remove_bg" in params: (self.check_remove_bg.select() if params["remove_bg"] else self.check_remove_bg.deselect())
             if "outline" in params: (self.check_outline.select() if params["outline"] else self.check_outline.deselect())
@@ -652,7 +680,9 @@ class PixelApp(ctk.CTk):
                     return
                 
                 p_name, p_param = ("Custom_User", params["user_pal"]) if params["palette_choice"] == "USER CUSTOM" else (("Custom_16bit", None) if params["palette_choice"] == "16-bit (4096 Colors)" else (params["palette_choice"], params["color_count"]))
-                proc = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"])
+                proc = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"], 
+                                             extract_policy=params.get("extract_policy", "Standard"),
+                                             mapping_policy=params.get("mapping_policy", "Classic"))
                 proc = self.plugin_engine.execute_hook("POST_PALETTE", proc, params)
                 if params["outline"]: proc = add_outline(proc)
                 proc = self.plugin_engine.execute_hook("FINAL_IMAGE", proc, params)
@@ -866,7 +896,9 @@ class PixelApp(ctk.CTk):
             sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
             small = img.resize((sw, sh), resample=Image.BOX)
             pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
-            proc = apply_palette_unified(small, pn, pp, p.get("dither", True))
+            proc = apply_palette_unified(small, pn, pp, p.get("dither", True),
+                                         extract_policy=p.get("extract_policy", "Standard"),
+                                         mapping_policy=p.get("mapping_policy", "Classic"))
             
             # Base Layer (No Outline)
             base = proc.resize(e["pil_image"].size, Image.NEAREST)

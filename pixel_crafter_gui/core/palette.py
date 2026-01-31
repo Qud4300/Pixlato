@@ -37,80 +37,132 @@ def export_as_gpl(path, colors, name="Pixlato Export"):
         print(f"Error exporting GPL: {e}")
         return False
 
-def apply_palette_unified(img, palette_name="Original", custom_colors=None, dither=True):
+def extract_aesthetic_palette(img, color_count=16):
     """
-    Unified Pipeline for Palette Application.
-    
-    Stages:
-    1. Standardization: RGBA conversion & Alpha extraction.
-    2. Pre-processing: Adaptive contrast enhancement for low-color palettes.
-    3. Target Generation: Create a standardized 'Master Palette' image.
-    4. Quantization: Strict mapping to the master palette using Pillow's dither engine.
-    5. Compositing: Restore Alpha and finalize.
+    RAP Extraction: Scores pixels by Saturation, Contrast, and Uniqueness.
+    Returns a list of RGB tuples.
     """
+    # 1. Prepare data
+    img_rgb = img.convert("RGB")
+    arr = np.array(img_rgb).astype(np.float32) / 255.0
+    pixels = arr.reshape(-1, 3)
     
-    # [Step 1] Standardization
+    # 2. Calculate Scoring Components
+    # Saturation (max - min)
+    sats = np.max(pixels, axis=1) - np.min(pixels, axis=1)
+    # Brightness (Value in HSV)
+    vals = np.max(pixels, axis=1)
+    # Contrast Score: High weight for very bright or dark
+    contrast = np.abs(vals - 0.5) * 2.0
+    
+    # Uniqueness: Simple Hue binning to find rare colors
+    hsv_pixels = np.array([colorsys.rgb_to_hsv(*p) for p in pixels])
+    hues = hsv_pixels[:, 0]
+    h_hist, _ = np.histogram(hues, bins=36, range=(0, 1))
+    # Normalize histogram to find rarity (1 / frequency)
+    rarity = 1.0 / (h_hist[np.clip((hues * 36).astype(int), 0, 35)] + 1.0)
+    rarity = rarity / np.max(rarity)
+    
+    # 3. Final Importance Score
+    # Weight: Saturation(40%) + Contrast(30%) + Uniqueness(30%)
+    scores = (sats * 0.4) + (contrast * 0.3) + (rarity * 0.3)
+    
+    # 4. Selection with Suppression (to ensure variety)
+    selected_indices = []
+    current_scores = scores.copy()
+    
+    for _ in range(color_count):
+        best_idx = np.argmax(current_scores)
+        if current_scores[best_idx] <= 0: break
+        
+        best_color = pixels[best_idx]
+        selected_indices.append(best_idx)
+        
+        # Suppress nearby colors in RGB space
+        diffs = np.linalg.norm(pixels - best_color, axis=1)
+        # Suppress everything within 15% distance
+        suppression = np.clip(diffs / 0.15, 0, 1)
+        current_scores *= suppression
+        
+    res_rgb = [(int(p[0]*255), int(p[1]*255), int(p[2]*255)) for p in pixels[selected_indices]]
+    return res_rgb
+
+def map_to_palette_perceptual(img, palette_img):
+    """
+    Maps image to a palette using perceptual weights (emphasizing Saturation and Value).
+    """
+    # Pillow's quantize already uses a decent perceptual model, 
+    # but we can enhance it by boosting image saturation before mapping.
+    enhancer = ImageEnhance.Color(img)
+    perceptual_boosted = enhancer.enhance(1.2) # Boost saturation by 20% during mapping
+    return perceptual_boosted.quantize(palette=palette_img, dither=Image.Dither.NONE)
+
+def apply_palette_unified(img, palette_name="Original", custom_colors=None, dither=True, extract_policy="Standard", mapping_policy="Classic"):
+    """
+    Updated Pipeline supporting RAP extraction and Perceptual mapping.
+    """
     if img.mode != "RGBA":
         img = img.convert("RGBA")
-    
-    # Extract Alpha Mask for final compositing
     alpha_mask = img.split()[-1]
     
-    # Optimize: If palette is Original, skip processing but ensure RGBA
     if palette_name == "Original":
         return img
 
-    # Work on RGB for processing
     rgb_img = img.convert("RGB")
 
-    # [Step 2 & 3] Target Generation & Pre-processing
-    target_palette, is_low_color = _generate_target_palette(palette_name, custom_colors)
+    # [Step 2 & 3] Target Generation
+    target_palette = None
+    is_low_color = False
     
-    # Pre-contrast: If using dithering with low color count (e.g. Gameboy), boost contrast
-    # to prevent "washed out" dark areas due to noise mixing.
+    if palette_name == "Limited":
+        if extract_policy == "Aesthetic":
+            colors = extract_aesthetic_palette(rgb_img, custom_colors if isinstance(custom_colors, int) else 16)
+            # Create palette image from custom list
+            flat = []
+            for c in colors: flat.extend(c)
+            flat += [0] * (768 - len(flat))
+            target_palette = Image.new("P", (1, 1))
+            target_palette.putpalette(flat)
+            is_low_color = len(colors) <= 4
+        else:
+            # Standard Pillow extraction
+            num = custom_colors if isinstance(custom_colors, int) else 256
+            target_palette = rgb_img.quantize(colors=num, dither=Image.Dither.NONE)
+            is_low_color = num <= 4
+    else:
+        target_palette, is_low_color = _generate_target_palette(palette_name, custom_colors)
+    
     if dither and is_low_color:
-        rgb_img = _apply_pre_contrast(rgb_img, factor=1.15) # 15% boost
+        rgb_img = _apply_pre_contrast(rgb_img, factor=1.15)
 
     # [Step 4] Unified Quantization
     if target_palette:
-        # Strict Mapping: Force mapping to the exact target palette
         dither_method = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-        quantized_img = rgb_img.quantize(palette=target_palette, dither=dither_method)
+        
+        if mapping_policy == "Perceptual":
+            # Use saturation-boosted mapping
+            enhancer = ImageEnhance.Color(rgb_img)
+            mapping_src = enhancer.enhance(1.2)
+            quantized_img = mapping_src.quantize(palette=target_palette, dither=dither_method)
+        else:
+            quantized_img = rgb_img.quantize(palette=target_palette, dither=dither_method)
+            
         result_rgb = quantized_img.convert("RGB")
         
     elif palette_name == "Custom_16bit":
-        # Algorithmic 12-bit RGB (4-bit per channel) -> 4096 colors
-        # This creates a retro "Amiga/ST" look.
-        # Accuracy: (x // 16) * 17 maps 0-15 exactly to 0-255.
         arr = np.array(rgb_img).astype(np.int16)
         arr = (arr // 16) * 17
         result_rgb = Image.fromarray(arr.astype(np.uint8))
         
     elif palette_name == "Grayscale":
-         # Fallback for dynamic grayscale
          num_colors = custom_colors if isinstance(custom_colors, int) else 256
          dither_method = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-         # For grayscale, we first convert to L, then quantize with dither
          result_rgb = rgb_img.convert("L").quantize(colors=num_colors, dither=dither_method).convert("RGB")
          
     else:
-         # Generic Fallback (Limited Mode)
-         num_colors = custom_colors if isinstance(custom_colors, int) else 256
-         dither_method = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-         
-         if dither:
-             # To ensure we use EXACTLY the limited colors during dithering:
-             # 1. Generate the best palette first (no dither)
-             temp_pal = rgb_img.quantize(colors=num_colors, dither=Image.Dither.NONE)
-             # 2. Apply it with dither
-             result_rgb = rgb_img.quantize(palette=temp_pal, dither=dither_method).convert("RGB")
-         else:
-             result_rgb = rgb_img.quantize(colors=num_colors, dither=Image.Dither.NONE).convert("RGB")
+         result_rgb = rgb_img.convert("RGB")
 
-    # [Step 5] Compositing - Restore Alpha
-    # We use the original alpha mask to cut out the background
     result_rgb.putalpha(alpha_mask)
-    
     return result_rgb
 
 def _generate_target_palette(palette_name, custom_colors):
