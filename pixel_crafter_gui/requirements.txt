@@ -1,4 +1,4 @@
-﻿altgraph==0.17.5
+altgraph==0.17.5
 customtkinter==5.2.2
 darkdetect==0.8.0
 filelock==3.20.3
@@ -23,6 +23,5 @@ threadpoolctl==3.6.0
 torch==2.10.0
 typing_extensions==4.15.0
 rembg==2.0.72
-onnxruntime-gpu==1.23.2
+onnxruntime-directml==1.23.0
 opencv-python==4.13.0.90
-

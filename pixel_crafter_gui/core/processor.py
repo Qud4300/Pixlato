@@ -199,54 +199,42 @@ def downsample_kmeans_adaptive(img, pixel_size, out_w, out_h):
     result_arr = result_tensor.reshape(out_h, out_w, 4).byte().cpu().numpy()
     return Image.fromarray(result_arr, "RGBA")
 
+def is_directml_supported():
+    """
+    Checks if DirectML (universal Windows GPU acceleration) is supported.
+    """
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        return 'DmlExecutionProvider' in providers
+    except:
+        return False
+
 # Global session cache for rembg to avoid reloading the model
 REMBG_SESSION = None
 
 def remove_background_ai(img):
     """
     Uses rembg (AI model) to automatically extract the main subject.
-    Utilizes GPU (CUDA) if available for maximum performance.
+    Utilizes DirectML for universal Windows GPU acceleration (AMD, Intel, NVIDIA).
     """
     global REMBG_SESSION
     try:
-        import onnxruntime as ort
-        import sys
-        
-        # Windows CUDA Library Path Patch
-        if sys.platform == "win32":
-            import os
-            # Try to find nvidia runtime libs in site-packages
-            venv_base = os.path.dirname(os.path.dirname(sys.executable))
-            site_packages = os.path.join(venv_base, "Lib", "site-packages")
-            
-            # Common paths for the installed nvidia-*-cu12 packages
-            lib_paths = [
-                os.path.join(site_packages, "nvidia", "cuda_runtime", "bin"),
-                os.path.join(site_packages, "nvidia", "cublas", "bin"),
-                os.path.join(site_packages, "nvidia", "cudnn", "bin"),
-                os.path.join(site_packages, "nvidia", "cufft", "bin"),
-                os.path.join(site_packages, "nvidia", "curand", "bin"),
-                os.path.join(site_packages, "nvidia", "cusolver", "bin"),
-                os.path.join(site_packages, "nvidia", "cusparse", "bin")
-            ]
-            
-            for p in lib_paths:
-                if os.path.exists(p) and p not in os.environ["PATH"]:
-                    os.environ["PATH"] = p + os.pathsep + os.environ["PATH"]
-
         from rembg import remove, new_session
+        import onnxruntime as ort
         
         # Initialize session if it doesn't exist
         if REMBG_SESSION is None:
-            # Check for GPU providers
             providers = ort.get_available_providers()
             target_providers = []
-            if 'CUDAExecutionProvider' in providers:
-                target_providers.append('CUDAExecutionProvider')
+            
+            # Prefer DirectML for universal acceleration
+            if 'DmlExecutionProvider' in providers:
+                target_providers.append('DmlExecutionProvider')
             if 'CPUExecutionProvider' in providers:
                 target_providers.append('CPUExecutionProvider')
             
-            # Use u2net (standard) but we could use u2netp for even more speed if needed
+            # Use u2net (standard)
             REMBG_SESSION = new_session(model_name="u2net", providers=target_providers)
             
         return remove(img, session=REMBG_SESSION)

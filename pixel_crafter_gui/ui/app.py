@@ -9,7 +9,9 @@ import threading
 import time
 
 # Import core logic
-from core.processor import pixelate_image, upscale_for_preview, add_outline, remove_background, apply_grain_effect, remove_background_ai, remove_background_interactive
+from core.processor import (pixelate_image, upscale_for_preview, add_outline, 
+                            remove_background, apply_grain_effect, remove_background_ai, 
+                            remove_background_interactive, is_directml_supported)
 from core.palette import apply_palette_unified
 from core.project_manager import ProjectManager
 from core.gif_processor import process_gif
@@ -34,6 +36,7 @@ class PixelApp(ctk.CTk):
         self.theme_manager = ThemeManager()
         self.plugin_engine = PluginEngine(os.path.join(project_root, "plugins"))
         self.plugin_engine.discover_plugins()
+        self.dml_supported = is_directml_supported()
         
         # Window Setup
         self.title("Pixlato - Pixel Art Studio")
@@ -277,10 +280,12 @@ class PixelApp(ctk.CTk):
         self.label_bg_mode.pack(side="left")
         self.locale.register(self.label_bg_mode, "sidebar_bg_mode")
         
-        self.option_bg_mode = ctk.CTkOptionMenu(self.param_frame, values=[
-            self.locale.get("bg_none"), self.locale.get("bg_classic"), 
-            self.locale.get("bg_ai"), self.locale.get("bg_interactive")
-        ], command=self.on_bg_mode_change)
+        bg_options = [self.locale.get("bg_none"), self.locale.get("bg_classic")]
+        if self.dml_supported:
+            bg_options.append(self.locale.get("bg_ai"))
+        bg_options.append(self.locale.get("bg_interactive"))
+
+        self.option_bg_mode = ctk.CTkOptionMenu(self.param_frame, values=bg_options, command=self.on_bg_mode_change)
         self.option_bg_mode.set(self.locale.get("bg_none"))
         self.option_bg_mode.pack(pady=2, fill="x")
         self.theme_manager.register_widget(self.option_bg_mode)
@@ -465,10 +470,12 @@ class PixelApp(ctk.CTk):
         
         # Update Option Menus
         self.option_downsample.configure(values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")])
-        self.option_bg_mode.configure(values=[
-            self.locale.get("bg_none"), self.locale.get("bg_classic"), 
-            self.locale.get("bg_ai"), self.locale.get("bg_interactive")
-        ])
+        
+        bg_options = [self.locale.get("bg_none"), self.locale.get("bg_classic")]
+        if self.dml_supported:
+            bg_options.append(self.locale.get("bg_ai"))
+        bg_options.append(self.locale.get("bg_interactive"))
+        self.option_bg_mode.configure(values=bg_options)
         
         current_presets = list(self.presets.keys())
         self.option_presets.configure(values=[self.locale.get("preset_default")] + current_presets)
@@ -719,7 +726,10 @@ class PixelApp(ctk.CTk):
             if "mapping_policy" in params: self.mapping_policy_switch.set(self._get_display(params["mapping_policy"], "mapping_policy"))
             
             if "bg_mode" in params:
-                self.option_bg_mode.set(self._get_display(params["bg_mode"], "bg_mode"))
+                target_bg = params["bg_mode"]
+                if target_bg == "AI Auto" and not self.dml_supported:
+                    target_bg = "None"
+                self.option_bg_mode.set(self._get_display(target_bg, "bg_mode"))
                 self.on_bg_mode_change(self.option_bg_mode.get())
             if "bg_seeds" in params: self.bg_seeds = list(params["bg_seeds"])
             if "fg_seeds" in params: self.fg_seeds = list(params["fg_seeds"])
