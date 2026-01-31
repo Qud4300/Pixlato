@@ -229,6 +229,30 @@ def downsample_kmeans_adaptive(img, pixel_size, out_w, out_h):
     result_arr = result_tensor.reshape(out_h, out_w, 4).byte().cpu().numpy()
     return Image.fromarray(result_arr, "RGBA")
 
+def apply_grain_effect(img, intensity=15):
+    """
+    Adds film grain noise to the image.
+    Uses Numpy for high performance.
+    """
+    if intensity <= 0:
+        return img
+        
+    # Convert to RGBA
+    img = img.convert("RGBA")
+    arr = np.array(img).astype(np.float32)
+    
+    # Generate monochromatic noise
+    # We apply the same noise to R, G, B to avoid color shifting
+    noise = np.random.randint(-intensity, intensity + 1, size=(arr.shape[0], arr.shape[1], 1))
+    
+    # Apply noise to RGB channels only
+    arr[..., :3] += noise
+    
+    # Clamp values
+    arr[..., :3] = np.clip(arr[..., :3], 0, 255)
+    
+    return Image.fromarray(arr.astype(np.uint8), "RGBA")
+
 def upscale_for_preview(small_img, original_size):
     """Upscales a small image to a larger size using NEAREST neighbor."""
     return small_img.resize(original_size, resample=Image.NEAREST)

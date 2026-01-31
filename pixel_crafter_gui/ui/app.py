@@ -9,7 +9,7 @@ import threading
 import time
 
 # Import core logic
-from core.processor import pixelate_image, upscale_for_preview, add_outline, remove_background
+from core.processor import pixelate_image, upscale_for_preview, add_outline, remove_background, apply_grain_effect
 from core.palette import apply_palette_unified
 from core.project_manager import ProjectManager
 from core.gif_processor import process_gif
@@ -257,6 +257,7 @@ class PixelApp(ctk.CTk):
         self.btn_custom_pal = ctk.CTkButton(self.param_frame, text="", command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
         self.btn_custom_pal.pack(pady=5, fill="x")
         self.locale.register(self.btn_custom_pal, "sidebar_edit_custom_pal")
+        
         self.check_dither = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
         self.check_dither.select()
         self.check_dither.pack(pady=5, fill="x")
@@ -278,6 +279,27 @@ class PixelApp(ctk.CTk):
         self.check_edge_enhance.pack(pady=5, fill="x")
         self.locale.register(self.check_edge_enhance, "sidebar_edge_enhance")
         self.theme_manager.register_widget(self.check_edge_enhance)
+
+        # Native Grain Effect
+        self.check_grain = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_grain_toggle)
+        self.check_grain.pack(pady=5, fill="x")
+        self.locale.register(self.check_grain, "sidebar_grain")
+        self.theme_manager.register_widget(self.check_grain)
+        
+        self.grain_container = ctk.CTkFrame(self.param_frame, fg_color="transparent")
+        self.grain_container.pack(fill="x")
+        grain_header = ctk.CTkFrame(self.grain_container, fg_color="transparent")
+        grain_header.pack(fill="x")
+        self.label_grain_amt = ctk.CTkLabel(grain_header, text="", anchor="w")
+        self.label_grain_amt.pack(side="left")
+        self.locale.register(self.label_grain_amt, "sidebar_grain_amt")
+        self.label_grain_val = ctk.CTkLabel(grain_header, text="15", width=40, anchor="e")
+        self.label_grain_val.pack(side="right")
+        self.slider_grain = ctk.CTkSlider(self.grain_container, from_=0, to=50, number_of_steps=50, command=self.update_grain_label)
+        self.slider_grain.set(15)
+        self.slider_grain.pack(pady=(2, 5), fill="x")
+        self.theme_manager.register_widget(self.slider_grain)
+        self.update_grain_controls_state()
 
         edge_header = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         edge_header.pack(fill="x")
@@ -389,14 +411,14 @@ class PixelApp(ctk.CTk):
         # Initial Text Sync
         self.update_ui_text()
 
-    # --- Methods (Correctly Indented) ---
+    # --- Methods ---
     def load_presets(self):
         if os.path.exists(self.presets_path):
             try:
                 with open(self.presets_path, "r", encoding="utf-8") as f:
                     self.presets = json.load(f)
                 names = list(self.presets.keys())
-                if names: self.option_presets.configure(values=names)
+                if names: self.option_presets.configure(values=[self.locale.get("preset_default")] + names)
             except Exception as e: print(f"Error loading presets: {e}")
 
     def apply_preset(self, preset_name):
@@ -421,10 +443,8 @@ class PixelApp(ctk.CTk):
         self.extract_policy_switch.configure(values=[self.locale.get("policy_standard"), self.locale.get("policy_aesthetic")])
         self.mapping_policy_switch.configure(values=[self.locale.get("policy_classic"), self.locale.get("policy_perceptual")])
         
-        # Update Option Menus (Values only, selected value remains mapped to logic)
+        # Update Option Menus
         self.option_downsample.configure(values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")])
-        
-        # Update Presets (Only if 'Defaults' is selected, otherwise it's a custom name)
         current_presets = list(self.presets.keys())
         self.option_presets.configure(values=[self.locale.get("preset_default")] + current_presets)
         if self.option_presets.get() in ["기본값 (Defaults)", "Defaults", "기본값"]:
@@ -464,16 +484,9 @@ class PixelApp(ctk.CTk):
 
     def save_project_file(self):
         if not self.original_image_path: return
-        state = {
-            "source_path": self.original_image_path, 
-            "pixel_size": int(self.slider_pixel.get()), 
-            "palette_mode": self.option_palette.get(), 
-            "max_colors": int(self.color_slider.get()), 
-            "dither": self.check_dither.get(), 
-            "outline_enabled": self.check_outline.get(), 
-            "custom_colors": self.user_palette_colors_persistent, 
-            "preview_zoom": self.preview_zoom
-        }
+        state = self.capture_ui_state()
+        state["source_path"] = self.original_image_path
+        state["preview_zoom"] = self.preview_zoom
         f = filedialog.asksaveasfilename(parent=self, defaultextension=".pcp", filetypes=[("Pixel Crafter Project", "*.pcp")])
         if f: ProjectManager.save_project(f, state)
 
@@ -487,17 +500,7 @@ class PixelApp(ctk.CTk):
                 self.original_image_path = state["source_path"]
                 with Image.open(self.original_image_path) as img: self.original_size = img.size
                 self.preview_zoom = state.get("preview_zoom", -1)
-            if "pixel_size" in state: self.slider_pixel.set(state["pixel_size"])
-            if "palette_mode" in state: 
-                self.option_palette.set(state["palette_mode"])
-                self.on_palette_menu_change(state["palette_mode"])
-            if "max_colors" in state: 
-                self.color_slider.set(state["max_colors"])
-                self.color_spinbox.set(state["max_colors"])
-            if "dither" in state: (self.check_dither.select() if state["dither"] else self.check_dither.deselect())
-            if "outline_enabled" in state: (self.check_outline.select() if state["outline_enabled"] else self.check_outline.deselect())
-            if "custom_colors" in state: self.user_palette_colors_persistent = [tuple(c) for c in state["custom_colors"]]
-            self.process_image()
+            self.restore_ui_state(state)
             self.btn_save.configure(state="normal")
         except Exception as e: print(f"Error project load: {e}")
 
@@ -508,7 +511,6 @@ class PixelApp(ctk.CTk):
             self.extract_policy_switch.pack_forget()
             self.rap_frame.pack_forget()
         else:
-            # Limited or Grayscale
             self.color_limit_group.pack(after=self.option_palette, pady=5, fill="x")
             if value == "Limited":
                 self.label_extract_policy.pack(after=self.color_limit_group, pady=(10, 0), fill="x")
@@ -568,13 +570,22 @@ class PixelApp(ctk.CTk):
             self.slider_edge_sens.configure(state="disabled", progress_color="gray")
             self.label_edge_sens.configure(text_color="gray")
 
+    def update_grain_label(self, value): self.label_grain_val.configure(text=f"{int(value)}"); self.on_param_change()
+    def on_grain_toggle(self): self.update_grain_controls_state(); self.on_param_change()
+    def update_grain_controls_state(self):
+        if self.check_grain.get():
+            self.slider_grain.configure(state="normal", progress_color=self.theme_manager.get_current_accent())
+            self.label_grain_val.configure(text_color="#FFFFFF")
+        else:
+            self.slider_grain.configure(state="disabled", progress_color="gray")
+            self.label_grain_val.configure(text_color="gray")
+
     def on_setting_mode_change(self, value):
-        if value == "Individual" and self.current_inventory_id is not None:
+        if value == self.locale.get("mode_individual") and self.current_inventory_id is not None:
             e = self.image_manager.get_image(self.current_inventory_id)
             if e and e["params"] is None: e["params"] = self.capture_ui_state()
 
     def _get_logical(self, val, cat):
-        """Maps display string back to internal logical key."""
         m = {
             "save_mode": {self.locale.get("save_pixelate"): "Pixelate", self.locale.get("save_style"): "Style Only"},
             "downsample": {self.locale.get("opt_standard"): "Standard", self.locale.get("opt_kmeans"): "K-Means"},
@@ -585,7 +596,6 @@ class PixelApp(ctk.CTk):
         return m.get(cat, {}).get(val, val)
 
     def _get_display(self, val, cat):
-        """Maps internal logical key to current display string."""
         m = {
             "save_mode": {"Pixelate": self.locale.get("save_pixelate"), "Style Only": self.locale.get("save_style")},
             "downsample": {"Standard": self.locale.get("opt_standard"), "K-Means": self.locale.get("opt_kmeans")},
@@ -611,6 +621,8 @@ class PixelApp(ctk.CTk):
             "outline": self.check_outline.get(), 
             "edge_enhance": self.check_edge_enhance.get(), 
             "edge_sensitivity": float(self.slider_edge_sens.get()), 
+            "grain_enabled": self.check_grain.get(),
+            "grain_intensity": int(self.slider_grain.get()),
             "downsample_method": self._get_logical(self.option_downsample.get(), "downsample"), 
             "custom_colors": list(self.user_palette_colors_persistent)
         }
@@ -650,50 +662,12 @@ class PixelApp(ctk.CTk):
             if "edge_sensitivity" in params: 
                 self.slider_edge_sens.set(params["edge_sensitivity"])
                 self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
-            if "downsample_method" in params: self.option_downsample.set(self._get_display(params["downsample_method"], "downsample"))
-            if "custom_colors" in params: self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
-            self.on_param_change()
-        except Exception as e: print(f"Error restore: {e}")
-        return {
-            "save_mode": self._get_logical(self.mode_switch.get(), "save_mode"), 
-            "pixel_size": int(self.pixel_spin.get()), 
-            "color_count": int(self.color_spinbox.get()), 
-            "palette_mode": self.option_palette.get(), 
-            "extract_policy": self._get_logical(self.extract_policy_switch.get(), "extract_policy"),
-            "mapping_policy": self._get_logical(self.mapping_policy_switch.get(), "mapping_policy"),
-            "dither": self.check_dither.get(), 
-            "remove_bg": self.check_remove_bg.get(), 
-            "outline": self.check_outline.get(), 
-            "edge_enhance": self.check_edge_enhance.get(), 
-            "edge_sensitivity": float(self.slider_edge_sens.get()), 
-            "downsample_method": self._get_logical(self.option_downsample.get(), "downsample"), 
-            "custom_colors": list(self.user_palette_colors_persistent)
-        }
-
-    def restore_ui_state(self, params):
-        if not params: return
-        try:
-            if "save_mode" in params: self.mode_switch.set(self._get_display(params["save_mode"], "save_mode"))
-            if "pixel_size" in params: 
-                self.slider_pixel.set(params["pixel_size"])
-                self.pixel_spin.set(params["pixel_size"])
-            if "color_count" in params: 
-                self.color_slider.set(params["color_count"])
-                self.color_spinbox.set(params["color_count"])
-            if "palette_mode" in params: 
-                self.option_palette.set(params["palette_mode"])
-                self.on_palette_menu_change(params["palette_mode"])
-            if "extract_policy" in params: self.extract_policy_switch.set(self._get_display(params["extract_policy"], "extract_policy"))
-            if "mapping_policy" in params: self.mapping_policy_switch.set(self._get_display(params["mapping_policy"], "mapping_policy"))
-            if "dither" in params: (self.check_dither.select() if params["dither"] else self.check_dither.deselect())
-            if "remove_bg" in params: (self.check_remove_bg.select() if params["remove_bg"] else self.check_remove_bg.deselect())
-            if "outline" in params: (self.check_outline.select() if params["outline"] else self.check_outline.deselect())
-            if "edge_enhance" in params: 
-                (self.check_edge_enhance.select() if params["edge_enhance"] else self.check_edge_enhance.deselect())
-                self.update_edge_controls_state()
-            if "edge_sensitivity" in params: 
-                self.slider_edge_sens.set(params["edge_sensitivity"])
-                self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
+            if "grain_enabled" in params:
+                (self.check_grain.select() if params["grain_enabled"] else self.check_grain.deselect())
+                self.update_grain_controls_state()
+            if "grain_intensity" in params:
+                self.slider_grain.set(params["grain_intensity"])
+                self.label_grain_val.configure(text=f"{int(params['grain_intensity'])}")
             if "downsample_method" in params: self.option_downsample.set(self._get_display(params["downsample_method"], "downsample"))
             if "custom_colors" in params: self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
             self.on_param_change()
@@ -785,6 +759,11 @@ class PixelApp(ctk.CTk):
                                              w_con=params.get("rap_w_con", 0.3),
                                              w_rar=params.get("rap_w_rar", 0.3))
                 proc = self.plugin_engine.execute_hook("POST_PALETTE", proc, params)
+                
+                # Apply Native Grain Effect (at the small pixel scale)
+                if params.get("grain_enabled"):
+                    proc = apply_grain_effect(proc, params.get("grain_intensity", 15))
+                
                 if params["outline"]: proc = add_outline(proc)
                 proc = self.plugin_engine.execute_hook("FINAL_IMAGE", proc, params)
                 prev = upscale_for_preview(proc, self.original_size)
@@ -805,7 +784,7 @@ class PixelApp(ctk.CTk):
             try:
                 clrs = self.extract_used_colors(proc)
                 self.palette_inspector.update_colors(clrs)
-                rw, rh = proc.size if self.mode_switch.get() == "Pixelate" else self.original_size
+                rw, rh = proc.size if self._get_logical(self.mode_switch.get(), "save_mode") == "Pixelate" else self.original_size
                 self.res_label.configure(text=f"{rw} x {rh}")
             except: pass
         if self._pending_reprocess: 
@@ -823,9 +802,6 @@ class PixelApp(ctk.CTk):
         tmp = pil_img.convert("RGB")
         colors = tmp.getcolors(maxcolors=4096)
         if not colors: return []
-        # Extract RGB tuples from (count, color) list
-        raw_colors = [c[1] for c in colors]
-        # Sort by frequency first to get top 16, then apply user sorting
         freq_sorted = sorted(colors, key=lambda x: x[0], reverse=True)
         top_16 = [c[1] for c in freq_sorted[:16]]
         return sort_colors(top_16, self.palette_sort_mode)
@@ -833,21 +809,14 @@ class PixelApp(ctk.CTk):
     def display_image(self):
         if not self.preview_image: return
         params = self.capture_ui_state()
-        
-        # UI_PRE_RENDER Hook: Modification of the full-res preview image
         render_img = self.plugin_engine.execute_hook("UI_PRE_RENDER", self.preview_image, params)
-        
         cw, ch = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
         if cw <= 1: cw, ch = 800, 600
         iw, ih = render_img.size
         if self.preview_zoom == -1: self.preview_zoom = min(cw / iw, ch / ih) * 0.9
         nw, nh = int(iw * self.preview_zoom), int(ih * self.preview_zoom)
-        
         disp = render_img.resize((nw, nh), Image.NEAREST)
-        
-        # UI_POST_RENDER Hook: Modification of the zoomed display image (e.g., UI overlays)
         disp = self.plugin_engine.execute_hook("UI_POST_RENDER", disp, params)
-        
         self.tk_preview = ImageTk.PhotoImage(disp)
         if self.canvas_image_id: self.preview_canvas.delete(self.canvas_image_id)
         self.canvas_image_id = self.preview_canvas.create_image(cw//2, ch//2, image=self.tk_preview, anchor="center")
@@ -861,10 +830,8 @@ class PixelApp(ctk.CTk):
         if self.preview_image: self.display_image()
 
     def toggle_magnifier(self):
-        if self.mag_window is None or not self.mag_window.winfo_exists(): 
-            self.mag_window = MagnifierWindow(self)
-        else: 
-            self.mag_window.focus()
+        if self.mag_window is None or not self.mag_window.winfo_exists(): self.mag_window = MagnifierWindow(self)
+        else: self.mag_window.focus()
 
     def update_magnifier(self, event):
         if not self.preview_image or not self.canvas_image_id or not (self.mag_window and self.mag_window.winfo_exists()): return
@@ -895,18 +862,14 @@ class PixelApp(ctk.CTk):
                 process_gif(p, f, int(self.slider_pixel.get()), pn, pp, self.check_dither.get(), self.check_outline.get())
                 self.btn_save.configure(text=self.locale.get("sidebar_export"), state="normal")
             else:
-                final = self.raw_pixel_image if self.mode_switch.get() == self.locale.get("save_pixelate") else self.preview_image
+                final = self.raw_pixel_image if self._get_logical(self.mode_switch.get(), "save_mode") == "Pixelate" else self.preview_image
                 if f.lower().endswith(('.jpg', '.bmp')): final = final.convert("RGB")
-                
-                # Metadata embedding for PNG
                 if f.lower().endswith('.png'):
                     from PIL.PngImagePlugin import PngInfo
                     metadata = PngInfo()
-                    params_json = json.dumps(self.capture_ui_state())
-                    metadata.add_text("Pixlato:Params", params_json)
+                    metadata.add_text("Pixlato:Params", json.dumps(self.capture_ui_state()))
                     final.save(f, pnginfo=metadata)
-                else:
-                    final.save(f)
+                else: final.save(f)
 
     def add_image_to_inventory(self):
         paths = filedialog.askopenfilenames(parent=self, filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")])
@@ -930,42 +893,27 @@ class PixelApp(ctk.CTk):
         self.inventory_widgets[fid] = item
         thumb = e["thumbnail"]
         ctk_t = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=(50, 50))
-        tl = ctk.CTkLabel(item, image=ctk_t, text="")
-        tl.pack(side="left", padx=5, pady=5)
-        tl.image = ctk_t
-        nl = ctk.CTkLabel(item, text=e["name"][:12], font=("Arial", 10), anchor="w")
-        nl.pack(side="left", fill="x", expand=True, padx=5)
+        tl = ctk.CTkLabel(item, image=ctk_t, text=""); tl.pack(side="left", padx=5, pady=5); tl.image = ctk_t
+        nl = ctk.CTkLabel(item, text=e["name"][:12], font=("Arial", 10), anchor="w"); nl.pack(side="left", fill="x", expand=True, padx=5)
         db = ctk.CTkButton(item, text="X", width=20, height=20, fg_color="#e74c3c", command=lambda: self.remove_from_inventory(fid))
-        db.place(relx=1.0, rely=0, anchor="ne", x=-5, y=5)
-        db.lower()
-        item.bind("<Enter>", lambda e: db.lift())
-        item.bind("<Leave>", lambda e: db.lower())
+        db.place(relx=1.0, rely=0, anchor="ne", x=-5, y=5); db.lower()
+        item.bind("<Enter>", lambda e: db.lift()); item.bind("<Leave>", lambda e: db.lower())
         item.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
         tl.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
         nl.bind("<Button-1>", lambda e: self.select_inventory_image(fid))
 
     def remove_from_inventory(self, iid):
-        if iid in self.inventory_widgets: 
-            self.inventory_widgets[iid].destroy()
-            del self.inventory_widgets[iid]
-        self.image_manager.remove_image(iid)
-        self.update_inventory_count_label()
+        if iid in self.inventory_widgets: self.inventory_widgets[iid].destroy(); del self.inventory_widgets[iid]
+        self.image_manager.remove_image(iid); self.update_inventory_count_label()
         if self.current_inventory_id == iid: 
             self.current_inventory_id = None
-            if self.image_manager.count() > 0:
-                self.select_inventory_image(self.image_manager.get_all()[0]["id"])
+            if self.image_manager.count() > 0: self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
     def export_used_palette_gpl(self):
-        if not hasattr(self, "raw_pixel_image") or not self.raw_pixel_image:
-            return
-            
+        if not self.raw_pixel_image: return
         colors = self.extract_used_colors(self.raw_pixel_image)
-        if not colors:
-            return
-            
-        f = filedialog.asksaveasfilename(parent=self, defaultextension=".gpl", 
-                                         filetypes=[("GIMP Palette", "*.gpl")],
-                                         initialfile="pixlato_palette.gpl")
+        if not colors: return
+        f = filedialog.asksaveasfilename(parent=self, defaultextension=".gpl", filetypes=[("GIMP Palette", "*.gpl")], initialfile="pixlato_palette.gpl")
         if f:
             from core.palette import export_as_gpl
             if export_as_gpl(f, colors):
@@ -973,86 +921,65 @@ class PixelApp(ctk.CTk):
                 self.after(3000, lambda: self.status_label.configure(text=""))
 
     def batch_export(self):
-        if self.image_manager.count() > 0: 
-            BatchExportWindow(self, self._start_batch_export_process)
+        if self.image_manager.count() > 0: BatchExportWindow(self, self._start_batch_export_process)
 
     def _start_batch_export_process(self, od, fs, win, ss=False, sep=False):
         import concurrent.futures
         from collections import defaultdict
         import math
-        g, mode, entries = self.capture_ui_state(), self.setting_mode_switch.get(), self.image_manager.get_all()
-        
-        # Group by original path to handle GIFs
+        g, mode, entries = self.capture_ui_state(), self._get_logical(self.setting_mode_switch.get(), "setting_mode"), self.image_manager.get_all()
         groups = defaultdict(list)
-        for e in entries:
-            groups[e["path"]].append(e)
+        for e in entries: groups[e["path"]].append(e)
 
         def process_frame_layered(e, target_params):
             p = target_params
             img = e["pil_image"].convert("RGBA")
             if p.get("remove_bg"): img = remove_background(img)
-            if p.get("edge_enhance"): 
-                from core.processor import enhance_internal_edges
-                img = enhance_internal_edges(img, p["edge_sensitivity"])
+            if p.get("edge_enhance"): from core.processor import enhance_internal_edges; img = enhance_internal_edges(img, p["edge_sensitivity"])
             sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
             small = img.resize((sw, sh), resample=Image.BOX)
             pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
-            proc = apply_palette_unified(small, pn, pp, p.get("dither", True),
-                                         extract_policy=p.get("extract_policy", "Standard"),
-                                         mapping_policy=p.get("mapping_policy", "Classic"))
+            proc = apply_palette_unified(small, pn, pp, p.get("dither", True), extract_policy=p.get("extract_policy", "Standard"), mapping_policy=p.get("mapping_policy", "Classic"),
+                                         w_sat=p.get("rap_w_sat", 0.4), w_con=p.get("rap_w_con", 0.3), w_rar=p.get("rap_w_rar", 0.3))
             
-            # Base Layer (No Outline)
+            if p.get("grain_enabled"): proc = apply_grain_effect(proc, p.get("grain_intensity", 15))
+            
             base = proc.resize(e["pil_image"].size, Image.NEAREST)
-            
-            # Outline Layer
             outline_img = None
             if p.get("outline"):
-                out_small = add_outline(proc)
-                # Create a mask where only the outline exists
-                # Pillow ImageChops.difference or simple subtraction
                 from PIL import ImageChops
-                diff = ImageChops.difference(out_small, proc)
+                out_small = add_outline(proc); diff = ImageChops.difference(out_small, proc)
                 outline_img = diff.resize(e["pil_image"].size, Image.NEAREST)
                 final = out_small.resize(e["pil_image"].size, Image.NEAREST)
-            else:
-                final = base
-                
+            else: final = base
             return final, base, outline_img
 
         def task_individual(e, f):
             try:
                 p = e["params"] if mode == "Individual" and e["params"] else g
                 final, base, outline = process_frame_layered(e, p)
-                
                 bn = os.path.basename(e['name'])
                 if sep and outline:
-                    # Separate files
-                    base.save(os.path.join(od, f"{bn}_base.png"))
-                    outline.save(os.path.join(od, f"{bn}_outline.png"))
+                    base.save(os.path.join(od, f"{bn}_base.png")); outline.save(os.path.join(od, f"{bn}_outline.png"))
                     return True, f"✅ Layers: {bn}"
                 else:
                     if f.lower() in ["jpg", "bmp"]: final = final.convert("RGB")
                     final.save(os.path.join(od, f"{bn}_pixel.{f.lower()}"))
                     return True, f"✅ {bn} ({f})"
-            except Exception as ex: return False, f"❌ {e['name']} ({f}): {ex}"
+            except Exception as ex: return False, f"❌ {e['name']}: {ex}"
 
         def task_gif_group(path, frames):
             try:
                 processed_frames = []
                 for e in frames:
                     p = e["params"] if mode == "Individual" and e["params"] else g
-                    final, _, _ = process_frame_layered(e, p)
-                    processed_frames.append(final.convert("P", palette=Image.ADAPTIVE))
-                
-                base_name = os.path.splitext(os.path.basename(path))[0]
-                save_path = os.path.join(od, f"{base_name}_pixel.gif")
+                    final, _, _ = process_frame_layered(e, p); processed_frames.append(final.convert("P", palette=Image.ADAPTIVE))
+                base_name = os.path.splitext(os.path.basename(path))[0]; save_path = os.path.join(od, f"{base_name}_pixel.gif")
                 dur = 100
                 try:
                     with Image.open(path) as orig: dur = orig.info.get('duration', 100)
                 except: pass
-                if processed_frames:
-                    processed_frames[0].save(save_path, save_all=True, append_images=processed_frames[1:],
-                                            duration=dur, loop=0, optimize=False)
+                if processed_frames: processed_frames[0].save(save_path, save_all=True, append_images=processed_frames[1:], duration=dur, loop=0, optimize=False)
                 return True, f"✅ GIF: {base_name}"
             except Exception as ex: return False, f"❌ GIF: {ex}"
 
@@ -1061,44 +988,29 @@ class PixelApp(ctk.CTk):
                 processed = []
                 for e in frames:
                     p = e["params"] if mode == "Individual" and e["params"] else g
-                    final, _, _ = process_frame_layered(e, p)
-                    processed.append(final)
+                    final, _, _ = process_frame_layered(e, p); processed.append(final)
                 if not processed: return False, "No frames"
-                n = len(processed)
-                cols = math.ceil(math.sqrt(n))
-                rows = math.ceil(n / cols)
-                fw, fh = processed[0].size
+                n = len(processed); cols = math.ceil(math.sqrt(n)); rows = math.ceil(n / cols); fw, fh = processed[0].size
                 sheet = Image.new("RGBA", (cols * fw, rows * fh), (0,0,0,0))
-                for i, img in enumerate(processed):
-                    r, c = divmod(i, cols)
-                    sheet.paste(img, (c * fw, r * fh))
-                base_name = os.path.splitext(os.path.basename(path))[0]
-                sheet.save(os.path.join(od, f"{base_name}_spritesheet.png"))
+                for i, img in enumerate(processed): r, c = divmod(i, cols); sheet.paste(img, (c * fw, r * fh))
+                base_name = os.path.splitext(os.path.basename(path))[0]; sheet.save(os.path.join(od, f"{base_name}_spritesheet.png"))
                 return True, f"✅ Sheet: {base_name}"
             except Exception as ex: return False, f"❌ Sheet: {ex}"
 
         def run():
-            done = 0
-            tasks = []
+            done = 0; tasks = []
             if ss:
                 for path, frames in groups.items():
                     if len(frames) > 1: tasks.append(("spritesheet", path, frames))
-            
             for f in fs:
                 if f == "GIF":
                     for path, frames in groups.items(): tasks.append(("gif", path, frames))
                 else:
                     for e in entries: tasks.append(("individual", e, f))
-            
-            # If ONLY separation is requested without specific formats, we still run individual
             if sep and not tasks:
                 for e in entries: tasks.append(("individual", e, "PNG"))
-
             total = len(tasks)
-            if total == 0:
-                self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
-                return
-
+            if total == 0: self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료")); return
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
                 fut = []
                 for t in tasks:
@@ -1106,12 +1018,8 @@ class PixelApp(ctk.CTk):
                     elif t[0] == "spritesheet": fut.append(ex.submit(task_spritesheet, t[1], t[2]))
                     else: fut.append(ex.submit(task_individual, t[1], t[2]))
                 for f in concurrent.futures.as_completed(fut):
-                    done += 1
-                    s, m = f.result()
-                    self.after(0, lambda m=m: win.log(m))
-                    self.after(0, lambda d=done, tl=total: win.update_progress(d, tl))
+                    done += 1; s, m = f.result(); self.after(0, lambda m=m: win.log(m)); self.after(0, lambda d=done, tl=total: win.update_progress(d, tl))
             self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
-        
         threading.Thread(target=run, daemon=True).start()
 
     def save_preset_dialog(self):
@@ -1120,48 +1028,26 @@ class PixelApp(ctk.CTk):
         if name:
             self.presets[name] = self.capture_ui_state()
             try:
-                with open(self.presets_path, "w", encoding="utf-8") as f: 
-                    json.dump(self.presets, f, indent=4)
-                self.option_presets.configure(values=list(self.presets.keys()))
+                with open(self.presets_path, "w", encoding="utf-8") as f: json.dump(self.presets, f, indent=4)
+                self.option_presets.configure(values=[self.locale.get("preset_default")] + list(self.presets.keys()))
                 self.option_presets.set(name)
             except Exception as e: print(f"Error saving preset: {e}")
 
 class MagnifierWindow(ctk.CTkToplevel):
     def __init__(self, parent):
-        super().__init__(parent)
-        self.title("🔍 Pixel Magnifier")
-        self.geometry("300x380")
-        self.attributes("-topmost", True)
-        self.parent = parent
-        self.display_label = ctk.CTkLabel(self, text="", width=280, height=280, fg_color="black", corner_radius=10)
-        self.display_label.pack(pady=10, padx=10)
-        f = ctk.CTkFrame(self, fg_color="transparent")
-        f.pack(pady=5, fill="x", padx=10)
+        super().__init__(parent); self.title("🔍 Pixel Magnifier"); self.geometry("300x380"); self.attributes("-topmost", True); self.parent = parent
+        self.display_label = ctk.CTkLabel(self, text="", width=280, height=280, fg_color="black", corner_radius=10); self.display_label.pack(pady=10, padx=10)
+        f = ctk.CTkFrame(self, fg_color="transparent"); f.pack(pady=5, fill="x", padx=10)
         ctk.CTkButton(f, text="-", width=40, command=self.zoom_out).pack(side="left", padx=5)
-        self.label_zoom = ctk.CTkLabel(f, text=f"{self.parent.mag_zoom}x", font=("Arial", 16, "bold"))
-        self.label_zoom.pack(side="left", expand=True)
+        self.label_zoom = ctk.CTkLabel(f, text=f"{self.parent.mag_zoom}x", font=("Arial", 16, "bold")); self.label_zoom.pack(side="left", expand=True)
         ctk.CTkButton(f, text="+", width=40, command=self.zoom_in).pack(side="left", padx=5)
-    
     def zoom_in(self):
-        if self.parent.mag_zoom < 16: 
-            self.parent.mag_zoom += 1
-            self.label_zoom.configure(text=f"{self.parent.mag_zoom}x")
-    
+        if self.parent.mag_zoom < 16: self.parent.mag_zoom += 1; self.label_zoom.configure(text=f"{self.parent.mag_zoom}x")
     def zoom_out(self):
-        if self.parent.mag_zoom > 2: 
-            self.parent.mag_zoom -= 1
-            self.label_zoom.configure(text=f"{self.parent.mag_zoom}x")
-    
+        if self.parent.mag_zoom > 2: self.parent.mag_zoom -= 1; self.label_zoom.configure(text=f"{self.parent.mag_zoom}x")
     def update_zoom(self, img, pos, z):
-        sz = max(1, int(280 / z))
-        sx, sy = pos
-        l, t = max(0, sx - sz // 2), max(0, sy - sz // 2)
-        r, b = min(img.size[0], l + sz), min(img.size[1], t + sz)
-        crop = img.crop((l, t, r, b)).resize((280, 280), Image.NEAREST)
-        ci = ctk.CTkImage(light_image=crop, dark_image=crop, size=(280, 280))
-        self.display_label.configure(image=ci, text="")
-        self.display_label.image = ci
+        sz = max(1, int(280 / z)); sx, sy = pos; l, t = max(0, sx - sz // 2), max(0, sy - sz // 2); r, b = min(img.size[0], l + sz), min(img.size[1], t + sz)
+        crop = img.crop((l, t, r, b)).resize((280, 280), Image.NEAREST); ci = ctk.CTkImage(light_image=crop, dark_image=crop, size=(280, 280))
+        self.display_label.configure(image=ci, text=""); self.display_label.image = ci
 
-if __name__ == "__main__": 
-    app = PixelApp()
-    app.mainloop()
+if __name__ == "__main__": app = PixelApp(); app.mainloop()

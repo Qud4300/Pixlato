@@ -1,8 +1,0 @@
-{
-    "id": "vintage_grain",
-    "name": "Vintage Grain",
-    "version": "1.0.0",
-    "author": "Pixlato Team",
-    "description": "Adds subtle noise to the image for a vintage look.",
-    "hooks": ["POST_PALETTE"]
-}

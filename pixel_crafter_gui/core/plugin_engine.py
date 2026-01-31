@@ -109,7 +109,7 @@ class PluginEngine:
                 "metadata": meta,
                 "class": plugin_class,
                 "instance": plugin_class(meta),
-                "enabled": True
+                "enabled": False
             }
             
             for hook in meta.get("hooks", []):
