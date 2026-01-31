@@ -9,7 +9,7 @@ import threading
 import time
 
 # Import core logic
-from core.processor import pixelate_image, upscale_for_preview, add_outline, remove_background, apply_grain_effect
+from core.processor import pixelate_image, upscale_for_preview, add_outline, remove_background, apply_grain_effect, remove_background_ai, remove_background_interactive
 from core.palette import apply_palette_unified
 from core.project_manager import ProjectManager
 from core.gif_processor import process_gif
@@ -68,6 +68,8 @@ class PixelApp(ctk.CTk):
         self.inventory_widgets = {}
         self.presets_path = os.path.join(project_root, "palettes", "presets.json")
         self.presets = {}
+        self.bg_seeds = []
+        self.fg_seeds = []
         self._is_processing = False
         self._pending_reprocess = False
 
@@ -267,10 +269,26 @@ class PixelApp(ctk.CTk):
         self.label_vis_fx = ctk.CTkLabel(self.param_frame, text="", anchor="w", font=("Arial", 12, "bold"))
         self.label_vis_fx.pack(pady=(10, 0), fill="x")
         self.locale.register(self.label_vis_fx, "sidebar_visual_effects")
-        self.check_remove_bg = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
-        self.check_remove_bg.pack(pady=5, fill="x")
-        self.locale.register(self.check_remove_bg, "sidebar_remove_bg")
-        self.theme_manager.register_widget(self.check_remove_bg)
+        
+        # Advanced Background Removal UI
+        self.bg_frame = ctk.CTkFrame(self.param_frame, fg_color="transparent")
+        self.bg_frame.pack(fill="x", pady=2)
+        self.label_bg_mode = ctk.CTkLabel(self.bg_frame, text="", anchor="w", font=("Arial", 11))
+        self.label_bg_mode.pack(side="left")
+        self.locale.register(self.label_bg_mode, "sidebar_bg_mode")
+        
+        self.option_bg_mode = ctk.CTkOptionMenu(self.param_frame, values=[
+            self.locale.get("bg_none"), self.locale.get("bg_classic"), 
+            self.locale.get("bg_ai"), self.locale.get("bg_interactive")
+        ], command=self.on_bg_mode_change)
+        self.option_bg_mode.set(self.locale.get("bg_none"))
+        self.option_bg_mode.pack(pady=2, fill="x")
+        self.theme_manager.register_widget(self.option_bg_mode)
+        
+        self.btn_clear_seeds = ctk.CTkButton(self.param_frame, text="", height=24, fg_color="#7f8c8d", 
+                                            command=self.clear_bg_seeds)
+        self.locale.register(self.btn_clear_seeds, "btn_clear_seeds")
+        
         self.check_outline = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
         self.check_outline.pack(pady=5, fill="x")
         self.locale.register(self.check_outline, "sidebar_outline")
@@ -381,6 +399,8 @@ class PixelApp(ctk.CTk):
         self.preview_canvas.bind("<MouseWheel>", self.on_preview_wheel)
         self.preview_canvas.bind("<Motion>", self.update_magnifier)
         self.preview_canvas.bind("<Configure>", self.on_resize)
+        self.preview_canvas.bind("<Button-1>", self.on_canvas_click)
+        self.preview_canvas.bind("<Button-3>", self.on_canvas_click)
         self.canvas_image_id = None
         self.tk_preview = None
 
@@ -445,6 +465,11 @@ class PixelApp(ctk.CTk):
         
         # Update Option Menus
         self.option_downsample.configure(values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")])
+        self.option_bg_mode.configure(values=[
+            self.locale.get("bg_none"), self.locale.get("bg_classic"), 
+            self.locale.get("bg_ai"), self.locale.get("bg_interactive")
+        ])
+        
         current_presets = list(self.presets.keys())
         self.option_presets.configure(values=[self.locale.get("preset_default")] + current_presets)
         if self.option_presets.get() in ["기본값 (Defaults)", "Defaults", "기본값"]:
@@ -580,6 +605,41 @@ class PixelApp(ctk.CTk):
             self.slider_grain.configure(state="disabled", progress_color="gray")
             self.label_grain_val.configure(text_color="gray")
 
+    def on_bg_mode_change(self, value):
+        mode = self._get_logical(value, "bg_mode")
+        if mode == "Interactive":
+            self.btn_clear_seeds.pack(after=self.option_bg_mode, pady=2, fill="x")
+            self.status_label.configure(text=self.locale.get("msg_interactive_tip") if self.locale.get("msg_interactive_tip") != "msg_interactive_tip" else "Left Click: BG | Right Click: FG")
+        else:
+            self.btn_clear_seeds.pack_forget()
+            self.status_label.configure(text="")
+        self.on_param_change()
+
+    def clear_bg_seeds(self):
+        self.bg_seeds = []
+        self.fg_seeds = []
+        self.on_param_change()
+
+    def on_canvas_click(self, event):
+        mode = self._get_logical(self.option_bg_mode.get(), "bg_mode")
+        if mode != "Interactive" or not self.preview_image: return
+        
+        # Map click to original image coordinates
+        cw, ch = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
+        iw, ih = self.preview_image.size
+        nw, nh = int(iw * self.preview_zoom), int(ih * self.preview_zoom)
+        
+        rel_x = (event.x - (cw//2 - nw//2)) / self.preview_zoom
+        rel_y = (event.y - (ch//2 - nh//2)) / self.preview_zoom
+        
+        if 0 <= rel_x < iw and 0 <= rel_y < ih:
+            # Button-1 (Left) is BG, Button-3 (Right) is FG
+            if event.num == 1:
+                self.bg_seeds.append((rel_x, rel_y))
+            else:
+                self.fg_seeds.append((rel_x, rel_y))
+            self.on_param_change()
+
     def on_setting_mode_change(self, value):
         if value == self.locale.get("mode_individual") and self.current_inventory_id is not None:
             e = self.image_manager.get_image(self.current_inventory_id)
@@ -591,7 +651,13 @@ class PixelApp(ctk.CTk):
             "downsample": {self.locale.get("opt_standard"): "Standard", self.locale.get("opt_kmeans"): "K-Means"},
             "setting_mode": {self.locale.get("mode_global"): "Global", self.locale.get("mode_individual"): "Individual"},
             "extract_policy": {self.locale.get("policy_standard"): "Standard", self.locale.get("policy_aesthetic"): "Aesthetic"},
-            "mapping_policy": {self.locale.get("policy_classic"): "Classic", self.locale.get("policy_perceptual"): "Perceptual"}
+            "mapping_policy": {self.locale.get("policy_classic"): "Classic", self.locale.get("policy_perceptual"): "Perceptual"},
+            "bg_mode": {
+                self.locale.get("bg_none"): "None", 
+                self.locale.get("bg_classic"): "Classic",
+                self.locale.get("bg_ai"): "AI Auto",
+                self.locale.get("bg_interactive"): "Interactive"
+            }
         }
         return m.get(cat, {}).get(val, val)
 
@@ -601,7 +667,13 @@ class PixelApp(ctk.CTk):
             "downsample": {"Standard": self.locale.get("opt_standard"), "K-Means": self.locale.get("opt_kmeans")},
             "setting_mode": {"Global": self.locale.get("mode_global"), "Individual": self.locale.get("mode_individual")},
             "extract_policy": {"Standard": self.locale.get("policy_standard"), "Aesthetic": self.locale.get("policy_aesthetic")},
-            "mapping_policy": {"Classic": self.locale.get("policy_classic"), "Perceptual": self.locale.get("policy_perceptual")}
+            "mapping_policy": {"Classic": self.locale.get("policy_classic"), "Perceptual": self.locale.get("policy_perceptual")},
+            "bg_mode": {
+                "None": self.locale.get("bg_none"),
+                "Classic": self.locale.get("bg_classic"),
+                "AI Auto": self.locale.get("bg_ai"),
+                "Interactive": self.locale.get("bg_interactive")
+            }
         }
         return m.get(cat, {}).get(val, val)
 
@@ -616,8 +688,11 @@ class PixelApp(ctk.CTk):
             "rap_w_sat": float(self.rap_weights["sat"][0].get()),
             "rap_w_con": float(self.rap_weights["con"][0].get()),
             "rap_w_rar": float(self.rap_weights["rar"][0].get()),
+            "bg_mode": self._get_logical(self.option_bg_mode.get(), "bg_mode"),
+            "bg_seeds": list(self.bg_seeds),
+            "fg_seeds": list(self.fg_seeds),
             "dither": self.check_dither.get(), 
-            "remove_bg": self.check_remove_bg.get(), 
+            "remove_bg": False, # Deprecated in favor of bg_mode
             "outline": self.check_outline.get(), 
             "edge_enhance": self.check_edge_enhance.get(), 
             "edge_sensitivity": float(self.slider_edge_sens.get()), 
@@ -643,6 +718,12 @@ class PixelApp(ctk.CTk):
             if "extract_policy" in params: self.extract_policy_switch.set(self._get_display(params["extract_policy"], "extract_policy"))
             if "mapping_policy" in params: self.mapping_policy_switch.set(self._get_display(params["mapping_policy"], "mapping_policy"))
             
+            if "bg_mode" in params:
+                self.option_bg_mode.set(self._get_display(params["bg_mode"], "bg_mode"))
+                self.on_bg_mode_change(self.option_bg_mode.get())
+            if "bg_seeds" in params: self.bg_seeds = list(params["bg_seeds"])
+            if "fg_seeds" in params: self.fg_seeds = list(params["fg_seeds"])
+
             if "rap_w_sat" in params:
                 self.rap_weights["sat"][0].set(params["rap_w_sat"])
                 self.rap_weights["sat"][1].configure(text=f"{params['rap_w_sat']:.2f}")
@@ -654,7 +735,6 @@ class PixelApp(ctk.CTk):
                 self.rap_weights["rar"][1].configure(text=f"{params['rap_w_rar']:.2f}")
 
             if "dither" in params: (self.check_dither.select() if params["dither"] else self.check_dither.deselect())
-            if "remove_bg" in params: (self.check_remove_bg.select() if params["remove_bg"] else self.check_remove_bg.deselect())
             if "outline" in params: (self.check_outline.select() if params["outline"] else self.check_outline.deselect())
             if "edge_enhance" in params: 
                 (self.check_edge_enhance.select() if params["edge_enhance"] else self.check_edge_enhance.deselect())
@@ -729,12 +809,30 @@ class PixelApp(ctk.CTk):
             try:
                 if source_type == "path":
                     with Image.open(source_data) as tmp: self.original_size = tmp.size
-                    raw = pixelate_image(source_data, params["pixel_size"], edge_enhance=params["edge_enhance"], edge_sensitivity=params["edge_sensitivity"], downsample_method=params["downsample_method"], remove_bg=params["remove_bg"], plugin_engine=self.plugin_engine, plugin_params=params)
+                    raw = pixelate_image(source_data, params["pixel_size"], 
+                                         edge_enhance=params["edge_enhance"], 
+                                         edge_sensitivity=params["edge_sensitivity"], 
+                                         downsample_method=params["downsample_method"], 
+                                         remove_bg=False, # Handled by bg_mode now
+                                         bg_mode=params.get("bg_mode", "None"),
+                                         bg_seeds=params.get("bg_seeds"),
+                                         fg_seeds=params.get("fg_seeds"),
+                                         plugin_engine=self.plugin_engine, 
+                                         plugin_params=params)
                 else:
                     img = source_data.convert("RGBA")
                     self.original_size = img.size
                     img = self.plugin_engine.execute_hook("PRE_PROCESS", img, params)
-                    if params["remove_bg"]: img = remove_background(img, tolerance=40)
+                    
+                    # Apply Advanced Background Removal
+                    bg_m = params.get("bg_mode", "None")
+                    if bg_m == "AI Auto":
+                        img = remove_background_ai(img)
+                    elif bg_m == "Interactive" and params.get("bg_seeds"):
+                        img = remove_background_interactive(img, params.get("bg_seeds"), params.get("fg_seeds"))
+                    elif bg_m == "Classic":
+                        img = remove_background(img, tolerance=40)
+                        
                     if params["edge_enhance"]: 
                         from core.processor import enhance_internal_edges
                         img = enhance_internal_edges(img, params["edge_sensitivity"])
@@ -934,7 +1032,18 @@ class PixelApp(ctk.CTk):
         def process_frame_layered(e, target_params):
             p = target_params
             img = e["pil_image"].convert("RGBA")
-            if p.get("remove_bg"): img = remove_background(img)
+            
+            # Apply Advanced Background Removal in Batch
+            bg_m = p.get("bg_mode", "None")
+            if bg_m == "AI Auto":
+                from core.processor import remove_background_ai
+                img = remove_background_ai(img)
+            elif bg_m == "Interactive" and p.get("bg_seeds"):
+                from core.processor import remove_background_interactive
+                img = remove_background_interactive(img, p.get("bg_seeds"), p.get("fg_seeds"))
+            elif bg_m == "Classic":
+                img = remove_background(img, tolerance=40)
+                
             if p.get("edge_enhance"): from core.processor import enhance_internal_edges; img = enhance_internal_edges(img, p["edge_sensitivity"])
             sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
             small = img.resize((sw, sh), resample=Image.BOX)

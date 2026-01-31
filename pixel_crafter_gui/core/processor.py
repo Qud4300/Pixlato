@@ -75,26 +75,12 @@ def remove_background(img, tolerance=50):
         print(f"Background Remove Error: {e}")
         return img
 
-def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False, edge_sensitivity=1.0, downsample_method="Standard", remove_bg=False, plugin_engine=None, plugin_params=None):
+def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False, edge_sensitivity=1.0, downsample_method="Standard", remove_bg=False, bg_mode="None", bg_seeds=None, fg_seeds=None, plugin_engine=None, plugin_params=None):
     """
-    Opens an image and reduces its resolution.
-    
-    Args:
-        image_path: Path to the image file.
-        pixel_size: Size of each pixel block.
-        target_width: Optional target width for the output.
-        edge_enhance: If True, apply internal edge enhancement before downsampling.
-        edge_sensitivity: Strength of edge enhancement (0.0 to 2.0).
-        downsample_method: One of "Standard", "Local Extrema", "K-Means", "Minority Emphasis".
-        remove_bg: If True, attempts to remove background color.
-        plugin_engine: Optional PluginEngine instance for hook execution.
-        plugin_params: Parameters for plugins.
-    
-    Returns:
-        Image: The small raw pixel image.
+    Opens an image and reduces its resolution with advanced background removal.
     """
     try:
-        # Open as RGBA to support transparency for outlines
+        # Open as RGBA
         img = Image.open(image_path).convert("RGBA")
     except Exception as e:
         print(f"Error opening image: {e}")
@@ -104,8 +90,12 @@ def pixelate_image(image_path, pixel_size, target_width=None, edge_enhance=False
     if plugin_engine:
         img = plugin_engine.execute_hook("PRE_PROCESS", img, plugin_params)
 
-    # Apply Background Removal if requested
-    if remove_bg:
+    # Apply Advanced Background Removal
+    if bg_mode == "AI Auto":
+        img = remove_background_ai(img)
+    elif bg_mode == "Interactive" and bg_seeds:
+        img = remove_background_interactive(img, bg_seeds, fg_seeds)
+    elif bg_mode == "Classic" or remove_bg:
         img = remove_background(img, tolerance=40)
 
     # Apply edge enhancement if requested (before downsampling)
@@ -228,6 +218,59 @@ def downsample_kmeans_adaptive(img, pixel_size, out_w, out_h):
     # 7. Back to PIL
     result_arr = result_tensor.reshape(out_h, out_w, 4).byte().cpu().numpy()
     return Image.fromarray(result_arr, "RGBA")
+
+def remove_background_ai(img):
+    """
+    Uses rembg (AI model) to automatically extract the main subject.
+    """
+    try:
+        from rembg import remove
+        return remove(img)
+    except Exception as e:
+        print(f"AI Background Removal Error: {e}")
+        return img
+
+def remove_background_interactive(img, bg_seeds, fg_seeds=None):
+    """
+    Uses OpenCV GrabCut to interactively remove background based on user points.
+    bg_seeds: list of (x, y) coordinates for background
+    fg_seeds: list of (x, y) coordinates for foreground (optional)
+    """
+    try:
+        import cv2
+        # Convert PIL to CV2 format (RGB)
+        img_np = np.array(img.convert("RGB"))
+        img_cv = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        
+        mask = np.zeros(img_cv.shape[:2], np.uint8)
+        mask.fill(cv2.GC_PR_FGD) # Default to probably foreground
+        
+        # Apply seeds
+        for x, y in bg_seeds:
+            if 0 <= x < img.width and 0 <= y < img.height:
+                cv2.circle(mask, (int(x), int(y)), 5, cv2.GC_BGD, -1)
+        
+        if fg_seeds:
+            for x, y in fg_seeds:
+                if 0 <= x < img.width and 0 <= y < img.height:
+                    cv2.circle(mask, (int(x), int(y)), 5, cv2.GC_FGD, -1)
+        
+        # GrabCut variables
+        bgdModel = np.zeros((1, 65), np.float64)
+        fgdModel = np.zeros((1, 65), np.float64)
+        
+        if bg_seeds:
+            cv2.grabCut(img_cv, mask, None, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_MASK)
+        else:
+            return img
+            
+        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+        res_np = np.array(img.convert("RGBA"))
+        res_np[..., 3] = mask2 * 255
+        return Image.fromarray(res_np, "RGBA")
+    except Exception as e:
+        print(f"Interactive Background Removal Error: {e}")
+        return img
 
 def apply_grain_effect(img, intensity=15):
     """
