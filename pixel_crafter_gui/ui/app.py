@@ -300,44 +300,52 @@ class PixelApp(ctk.CTk):
         self.check_outline.pack(pady=5, fill="x")
         self.locale.register(self.check_outline, "sidebar_outline")
         self.theme_manager.register_widget(self.check_outline)
-        self.check_edge_enhance = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_edge_enhance_toggle)
-        self.check_edge_enhance.pack(pady=5, fill="x")
+
+        # Edge Enhancement Group
+        self.edge_group = ctk.CTkFrame(self.param_frame, fg_color="transparent")
+        self.edge_group.pack(fill="x", pady=5)
+        self.check_edge_enhance = ctk.CTkCheckBox(self.edge_group, text="", command=self.on_edge_enhance_toggle)
+        self.check_edge_enhance.pack(fill="x")
         self.locale.register(self.check_edge_enhance, "sidebar_edge_enhance")
         self.theme_manager.register_widget(self.check_edge_enhance)
 
-        # Native Grain Effect
-        self.check_grain = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_grain_toggle)
-        self.check_grain.pack(pady=5, fill="x")
+        self.edge_controls_container = ctk.CTkFrame(self.edge_group, fg_color="transparent")
+        self.edge_controls_container.pack(fill="x", padx=(25, 0)) # Indent to show relationship
+        edge_header = ctk.CTkFrame(self.edge_controls_container, fg_color="transparent")
+        edge_header.pack(fill="x")
+        self.label_edge_sens_header = ctk.CTkLabel(edge_header, text="", anchor="w", font=("Arial", 10))
+        self.label_edge_sens_header.pack(side="left")
+        self.locale.register(self.label_edge_sens_header, "sidebar_edge_sens")
+        self.label_edge_sens = ctk.CTkLabel(edge_header, text="1.0", width=40, anchor="e", font=("Arial", 10))
+        self.label_edge_sens.pack(side="right")
+        self.slider_edge_sens = ctk.CTkSlider(self.edge_controls_container, from_=0, to=10.0, number_of_steps=100, height=16, command=self.update_edge_sens_label)
+        self.slider_edge_sens.set(1.0)
+        self.slider_edge_sens.pack(fill="x")
+        self.theme_manager.register_widget(self.slider_edge_sens)
+        self.update_edge_controls_state()
+
+        # Native Grain Effect Group
+        self.grain_group = ctk.CTkFrame(self.param_frame, fg_color="transparent")
+        self.grain_group.pack(fill="x", pady=5)
+        self.check_grain = ctk.CTkCheckBox(self.grain_group, text="", command=self.on_grain_toggle)
+        self.check_grain.pack(fill="x")
         self.locale.register(self.check_grain, "sidebar_grain")
         self.theme_manager.register_widget(self.check_grain)
         
-        self.grain_container = ctk.CTkFrame(self.param_frame, fg_color="transparent")
-        self.grain_container.pack(fill="x")
-        grain_header = ctk.CTkFrame(self.grain_container, fg_color="transparent")
+        self.grain_controls_container = ctk.CTkFrame(self.grain_group, fg_color="transparent")
+        self.grain_controls_container.pack(fill="x", padx=(25, 0)) # Indent
+        grain_header = ctk.CTkFrame(self.grain_controls_container, fg_color="transparent")
         grain_header.pack(fill="x")
-        self.label_grain_amt = ctk.CTkLabel(grain_header, text="", anchor="w")
+        self.label_grain_amt = ctk.CTkLabel(grain_header, text="", anchor="w", font=("Arial", 10))
         self.label_grain_amt.pack(side="left")
         self.locale.register(self.label_grain_amt, "sidebar_grain_amt")
-        self.label_grain_val = ctk.CTkLabel(grain_header, text="15", width=40, anchor="e")
+        self.label_grain_val = ctk.CTkLabel(grain_header, text="15", width=40, anchor="e", font=("Arial", 10))
         self.label_grain_val.pack(side="right")
-        self.slider_grain = ctk.CTkSlider(self.grain_container, from_=0, to=50, number_of_steps=50, command=self.update_grain_label)
+        self.slider_grain = ctk.CTkSlider(self.grain_controls_container, from_=0, to=50, number_of_steps=50, height=16, command=self.update_grain_label)
         self.slider_grain.set(15)
-        self.slider_grain.pack(pady=(2, 5), fill="x")
+        self.slider_grain.pack(fill="x")
         self.theme_manager.register_widget(self.slider_grain)
         self.update_grain_controls_state()
-
-        edge_header = ctk.CTkFrame(self.param_frame, fg_color="transparent")
-        edge_header.pack(fill="x")
-        self.label_edge_sens_header = ctk.CTkLabel(edge_header, text="", anchor="w")
-        self.label_edge_sens_header.pack(side="left")
-        self.locale.register(self.label_edge_sens_header, "sidebar_edge_sens")
-        self.label_edge_sens = ctk.CTkLabel(edge_header, text="1.0", width=40, anchor="e")
-        self.label_edge_sens.pack(side="right")
-        self.slider_edge_sens = ctk.CTkSlider(self.param_frame, from_=0, to=10.0, number_of_steps=100, command=self.update_edge_sens_label)
-        self.slider_edge_sens.set(1.0)
-        self.slider_edge_sens.pack(pady=(2, 5), fill="x")
-        self.theme_manager.register_widget(self.slider_edge_sens)
-        self.update_edge_controls_state()
 
         # Downsample & Presets
         self.label_downsample = ctk.CTkLabel(self.param_frame, text="", anchor="w")
@@ -888,7 +896,13 @@ class PixelApp(ctk.CTk):
 
     def _on_processing_complete(self, proc, prev=None):
         self._is_processing = False
-        self.status_label.configure(text="")
+        
+        # Restore interactive guide if in Manual mode, otherwise clear
+        bg_mode = self._get_logical(self.option_bg_mode.get(), "bg_mode")
+        if bg_mode == "Interactive":
+            self.status_label.configure(text=self.locale.get("msg_interactive_tip"), text_color="#e67e22")
+        else:
+            self.status_label.configure(text="", text_color="#2ecc71")
         
         if proc:
             self.raw_pixel_image, self.preview_image = proc, prev
@@ -901,8 +915,6 @@ class PixelApp(ctk.CTk):
                 self.res_label.configure(text=f"{rw} x {rh}")
             except: pass
         else:
-            # If processing failed or was cancelled, we don't necessarily clear
-            # unless the inventory is empty.
             if self.image_manager.count() == 0:
                 self.clear_preview()
         
