@@ -29,7 +29,12 @@ class LocaleManager:
     def register(self, widget, key, prefix="", suffix=""):
         """Registers a widget to be automatically updated when language changes."""
         # Use weakref to prevent memory leaks when widgets are destroyed
-        self._registered_widgets.append((weakref.ref(widget), key, prefix, suffix))
+        ref = weakref.ref(widget)
+        
+        # Remove existing registration for this widget if it exists
+        self._registered_widgets = [r for r in self._registered_widgets if r[0]() is not None and r[0]() is not widget]
+        
+        self._registered_widgets.append((ref, key, prefix, suffix))
         # Initial set
         self._update_widget(widget, key, prefix, suffix)
 

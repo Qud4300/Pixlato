@@ -129,8 +129,8 @@ class PixelApp(ctk.CTk):
         self.label_setting_mode.pack(pady=(5, 0), padx=20, fill="x")
         self.locale.register(self.label_setting_mode, "sidebar_setting_mode")
 
-        self.setting_mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=["Global", "Individual"], command=self.on_setting_mode_change)
-        self.setting_mode_switch.set("Global")
+        self.setting_mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=[self.locale.get("mode_global"), self.locale.get("mode_individual")], command=self.on_setting_mode_change)
+        self.setting_mode_switch.set(self.locale.get("mode_global"))
         self.setting_mode_switch.pack(pady=5, padx=20, fill="x")
         self.theme_manager.register_widget(self.setting_mode_switch)
 
@@ -166,8 +166,8 @@ class PixelApp(ctk.CTk):
         self.label_mode.pack(pady=(10, 0), padx=15, fill="x")
         self.locale.register(self.label_mode, "sidebar_save_mode")
 
-        self.mode_switch = ctk.CTkSegmentedButton(self.scroll_sidebar, values=["Style Only", "Pixelate"], command=self.on_param_change)
-        self.mode_switch.set("Style Only")
+        self.mode_switch = ctk.CTkSegmentedButton(self.scroll_sidebar, values=[self.locale.get("save_pixelate"), self.locale.get("save_style")], command=self.on_param_change)
+        self.mode_switch.set(self.locale.get("save_pixelate"))
         self.mode_switch.pack(pady=5, padx=15, fill="x")
         self.theme_manager.register_widget(self.mode_switch)
 
@@ -255,8 +255,8 @@ class PixelApp(ctk.CTk):
         self.label_downsample = ctk.CTkLabel(self.param_frame, text="", anchor="w")
         self.label_downsample.pack(pady=(5, 0), fill="x")
         self.locale.register(self.label_downsample, "sidebar_downsample")
-        self.option_downsample = ctk.CTkOptionMenu(self.param_frame, values=["Standard", "K-Means"], command=self.on_param_change)
-        self.option_downsample.set("Standard")
+        self.option_downsample = ctk.CTkOptionMenu(self.param_frame, values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")], command=self.on_param_change)
+        self.option_downsample.set(self.locale.get("opt_standard"))
         self.option_downsample.pack(pady=5, fill="x")
         self.theme_manager.register_widget(self.option_downsample)
 
@@ -265,8 +265,8 @@ class PixelApp(ctk.CTk):
         self.locale.register(self.label_presets_header, "sidebar_presets")
         preset_frame = ctk.CTkFrame(self.param_frame, fg_color="transparent")
         preset_frame.pack(fill="x", pady=5)
-        self.option_presets = ctk.CTkOptionMenu(preset_frame, values=["기본값 (Defaults)"], command=self.apply_preset)
-        self.option_presets.set("기본값 (Defaults)")
+        self.option_presets = ctk.CTkOptionMenu(preset_frame, values=[self.locale.get("preset_default")], command=self.apply_preset)
+        self.option_presets.set(self.locale.get("preset_default"))
         self.option_presets.pack(side="left", fill="x", expand=True, padx=(0, 5))
         self.theme_manager.register_widget(self.option_presets)
         self.btn_save_preset = ctk.CTkButton(preset_frame, text="💾", width=30, command=self.save_preset_dialog)
@@ -367,6 +367,19 @@ class PixelApp(ctk.CTk):
     def update_ui_text(self):
         self.locale.refresh_widgets()
         self.update_inventory_count_label()
+        
+        # Update Segmented Buttons
+        self.setting_mode_switch.configure(values=[self.locale.get("mode_global"), self.locale.get("mode_individual")])
+        self.mode_switch.configure(values=[self.locale.get("save_pixelate"), self.locale.get("save_style")])
+        
+        # Update Option Menus (Values only, selected value remains mapped to logic)
+        self.option_downsample.configure(values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")])
+        
+        # Update Presets (Only if 'Defaults' is selected, otherwise it's a custom name)
+        current_presets = list(self.presets.keys())
+        self.option_presets.configure(values=[self.locale.get("preset_default")] + current_presets)
+        if self.option_presets.get() in ["기본값 (Defaults)", "Defaults", "기본값"]:
+            self.option_presets.set(self.locale.get("preset_default"))
 
     def load_default_palette(self):
         path = os.path.join(self.palette_dir, "default_palette.json")
@@ -494,25 +507,43 @@ class PixelApp(ctk.CTk):
             e = self.image_manager.get_image(self.current_inventory_id)
             if e and e["params"] is None: e["params"] = self.capture_ui_state()
 
+    def _get_logical(self, val, cat):
+        """Maps display string back to internal logical key."""
+        m = {
+            "save_mode": {self.locale.get("save_pixelate"): "Pixelate", self.locale.get("save_style"): "Style Only"},
+            "downsample": {self.locale.get("opt_standard"): "Standard", self.locale.get("opt_kmeans"): "K-Means"},
+            "setting_mode": {self.locale.get("mode_global"): "Global", self.locale.get("mode_individual"): "Individual"}
+        }
+        return m.get(cat, {}).get(val, val)
+
+    def _get_display(self, val, cat):
+        """Maps internal logical key to current display string."""
+        m = {
+            "save_mode": {"Pixelate": self.locale.get("save_pixelate"), "Style Only": self.locale.get("save_style")},
+            "downsample": {"Standard": self.locale.get("opt_standard"), "K-Means": self.locale.get("opt_kmeans")},
+            "setting_mode": {"Global": self.locale.get("mode_global"), "Individual": self.locale.get("mode_individual")}
+        }
+        return m.get(cat, {}).get(val, val)
+
     def capture_ui_state(self):
         return {
-            "save_mode": self.mode_switch.get(), 
-            "pixel_size": int(self.slider_pixel.get()), 
-            "color_count": int(self.color_slider.get()), 
+            "save_mode": self._get_logical(self.mode_switch.get(), "save_mode"), 
+            "pixel_size": int(self.pixel_spin.get()), 
+            "color_count": int(self.color_spinbox.get()), 
             "palette_mode": self.option_palette.get(), 
             "dither": self.check_dither.get(), 
             "remove_bg": self.check_remove_bg.get(), 
             "outline": self.check_outline.get(), 
             "edge_enhance": self.check_edge_enhance.get(), 
             "edge_sensitivity": float(self.slider_edge_sens.get()), 
-            "downsample_method": self.option_downsample.get(), 
+            "downsample_method": self._get_logical(self.option_downsample.get(), "downsample"), 
             "custom_colors": list(self.user_palette_colors_persistent)
         }
 
     def restore_ui_state(self, params):
         if not params: return
         try:
-            if "save_mode" in params: self.mode_switch.set(params["save_mode"])
+            if "save_mode" in params: self.mode_switch.set(self._get_display(params["save_mode"], "save_mode"))
             if "pixel_size" in params: 
                 self.slider_pixel.set(params["pixel_size"])
                 self.pixel_spin.set(params["pixel_size"])
@@ -531,14 +562,14 @@ class PixelApp(ctk.CTk):
             if "edge_sensitivity" in params: 
                 self.slider_edge_sens.set(params["edge_sensitivity"])
                 self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
-            if "downsample_method" in params: self.option_downsample.set(params["downsample_method"])
+            if "downsample_method" in params: self.option_downsample.set(self._get_display(params["downsample_method"], "downsample"))
             if "custom_colors" in params: self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
             self.on_param_change()
         except Exception as e: print(f"Error restore: {e}")
 
     def on_param_change(self, *args):
         if self.current_inventory_id is not None:
-            if self.setting_mode_switch.get() == "Individual":
+            if self._get_logical(self.setting_mode_switch.get(), "setting_mode") == "Individual":
                 e = self.image_manager.get_image(self.current_inventory_id)
                 if e: e["params"] = self.capture_ui_state()
             e = self.image_manager.get_image(self.current_inventory_id)
@@ -550,7 +581,7 @@ class PixelApp(ctk.CTk):
         self.current_inventory_id = image_id
         e = self.image_manager.get_image(image_id)
         if e:
-            if self.setting_mode_switch.get() == "Individual":
+            if self._get_logical(self.setting_mode_switch.get(), "setting_mode") == "Individual":
                 if e["params"]: self.restore_ui_state(e["params"])
                 else: 
                     e["params"] = self.capture_ui_state()
@@ -743,10 +774,7 @@ class PixelApp(ctk.CTk):
             self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
     def update_inventory_count_label(self):
-        for w in self.inventory_frame.winfo_children():
-            if isinstance(w, ctk.CTkLabel) and (self.locale.get("inv_title") in w.cget("text") or "인벤토리" in w.cget("text")):
-                w.configure(text=f"{self.locale.get('inv_title')} ({self.image_manager.count()}/256)")
-                break
+        self.locale.register(self.label_inv_header, "inv_title", suffix=f" ({self.image_manager.count()}/256)")
 
     def _create_inventory_item(self, e):
         fid = e["id"]

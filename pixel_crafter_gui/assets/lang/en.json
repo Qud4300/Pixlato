@@ -28,6 +28,13 @@
     "inv_add": "📂 Add Image",
     "inv_format": "Export Format:",
     "inv_save_all": "Save All (Batch)",
+    "opt_standard": "Standard",
+    "opt_kmeans": "AI (K-Means)",
+    "mode_global": "Global",
+    "mode_individual": "Individual",
+    "save_pixelate": "Pixelate",
+    "save_style": "Style Only",
+    "preset_default": "Defaults",
     "status_processing": "⏳ Processing...",
     "msg_security_bomb": "Security Warning: Image resolution too large.",
     "msg_integrity_failed": "Security Error: Project file corrupted or tampered."
