@@ -28,6 +28,10 @@
     "inv_add": "📂 이미지 추가",
     "inv_format": "저장 포맷:",
     "inv_save_all": "일괄 저장 (Save All)",
+    "batch_formats": "내보낼 포맷 선택:",
+    "batch_path": "저장 경로:",
+    "batch_spritesheet": "스프라이트 시트 (Sprite Sheet)",
+    "batch_separate": "레이어 분리 (Outline/Base)",
     "opt_standard": "표준 (Standard)",
     "opt_kmeans": "AI (K-Means)",
     "mode_global": "전역 (Global)",
@@ -35,6 +39,7 @@
     "save_pixelate": "픽셀화 (Pixelate)",
     "save_style": "스타일만 (Style Only)",
     "preset_default": "기본값 (Defaults)",
+    "nav_export_gpl": "GPL 내보내기",
     "status_processing": "⏳ 처리 중 (Processing)...",
     "msg_security_bomb": "보안 경고: 이미지 해상도가 너무 커서 처리를 중단했습니다.",
     "msg_integrity_failed": "보안 오류: 프로젝트 파일이 손상되었거나 변조되었습니다."

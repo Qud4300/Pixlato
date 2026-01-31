@@ -5,6 +5,7 @@ Supports GIF frame extraction and batch processing.
 from PIL import Image, ImageSequence
 from PIL.Image import DecompressionBombError
 import os
+import json
 
 class ImageManager:
     MAX_IMAGES = 256
@@ -14,6 +15,15 @@ class ImageManager:
         self.images = []
         self._next_id = 0
     
+    def _extract_pixlato_metadata(self, img):
+        """Attempts to extract Pixlato parameters from PNG metadata."""
+        if hasattr(img, "info") and "Pixlato:Params" in img.info:
+            try:
+                return json.loads(img.info["Pixlato:Params"])
+            except:
+                pass
+        return None
+
     def add_image(self, path):
         """
         Adds an image to the inventory.
@@ -28,6 +38,9 @@ class ImageManager:
         
         try:
             img = Image.open(path)
+            # Detect metadata
+            embedded_params = self._extract_pixlato_metadata(img)
+            
             filename = os.path.basename(path)
             name_base, ext = os.path.splitext(filename)
             
@@ -45,7 +58,7 @@ class ImageManager:
                         "name": f"{name_base}_{i}",
                         "pil_image": frame_copy,
                         "thumbnail": self._create_thumbnail(frame_copy),
-                        "params": None # For Phase 19 individual settings
+                        "params": embedded_params # Assign embedded parameters
                     }
                     self.images.append(entry)
                     added_ids.append(self._next_id)
@@ -59,7 +72,7 @@ class ImageManager:
                     "name": name_base,
                     "pil_image": img_rgba,
                     "thumbnail": self._create_thumbnail(img_rgba),
-                    "params": None # For Phase 19 individual settings
+                    "params": embedded_params # Assign embedded parameters
                 }
                 self.images.append(entry)
                 added_ids.append(self._next_id)

@@ -655,7 +655,9 @@ class BatchExportWindow(ctk.CTkToplevel):
         # Formats Section
         format_frame = ctk.CTkFrame(self)
         format_frame.pack(pady=10, padx=20, fill="x")
-        ctk.CTkLabel(format_frame, text="내보낼 포맷 선택:", font=("Arial", 12, "bold")).pack(pady=10, padx=10, anchor="w")
+        self.label_fmt = ctk.CTkLabel(format_frame, text="내보낼 포맷 선택:", font=("Arial", 12, "bold"))
+        self.label_fmt.pack(pady=10, padx=10, anchor="w")
+        self.parent.locale.register(self.label_fmt, "batch_formats")
         
         self.format_vars = {
             "PNG": ctk.BooleanVar(value=True),
@@ -671,13 +673,28 @@ class BatchExportWindow(ctk.CTkToplevel):
         # Output Directory Section
         dir_frame = ctk.CTkFrame(self)
         dir_frame.pack(pady=10, padx=20, fill="x")
-        ctk.CTkLabel(dir_frame, text="저장 경로:", font=("Arial", 12, "bold")).pack(pady=5, padx=10, anchor="w")
+        self.label_path = ctk.CTkLabel(dir_frame, text="저장 경로:", font=("Arial", 12, "bold"))
+        self.label_path.pack(pady=5, padx=10, anchor="w")
+        self.parent.locale.register(self.label_path, "batch_path")
         
         self.entry_dir = ctk.CTkEntry(dir_frame)
         self.entry_dir.pack(side="left", fill="x", expand=True, padx=(10, 5), pady=10)
         
         self.btn_browse = ctk.CTkButton(dir_frame, text="찾기...", width=60, command=self.browse_dir)
         self.btn_browse.pack(side="right", padx=(0, 10), pady=10)
+
+        # Advanced Options Section
+        adv_frame = ctk.CTkFrame(self)
+        adv_frame.pack(pady=10, padx=20, fill="x")
+        self.var_spritesheet = ctk.BooleanVar(value=False)
+        self.check_spritesheet = ctk.CTkCheckBox(adv_frame, text="스프라이트 시트 (Sprite Sheet)", variable=self.var_spritesheet)
+        self.check_spritesheet.pack(pady=10, padx=10, anchor="w")
+        self.parent.locale.register(self.check_spritesheet, "batch_spritesheet")
+
+        self.var_separate = ctk.BooleanVar(value=False)
+        self.check_separate = ctk.CTkCheckBox(adv_frame, text="레이어 분리 (Outline/Base)", variable=self.var_separate)
+        self.check_separate.pack(pady=10, padx=10, anchor="w")
+        self.parent.locale.register(self.check_separate, "batch_separate")
 
         # Progress Section
         self.progress_label = ctk.CTkLabel(self, text="준비됨", font=("Arial", 12))
@@ -717,12 +734,12 @@ class BatchExportWindow(ctk.CTkToplevel):
             return
             
         selected_formats = [fmt for fmt, var in self.format_vars.items() if var.get()]
-        if not selected_formats:
-            self.log("❌ 오류: 최소 하나의 포맷을 선택하세요.")
+        if not selected_formats and not self.var_spritesheet.get() and not self.var_separate.get():
+            self.log("❌ 오류: 최소 하나의 포맷 또는 옵션을 선택하세요.")
             return
 
         self.btn_start.configure(state="disabled")
-        self.start_callback(output_dir, selected_formats, self)
+        self.start_callback(output_dir, selected_formats, self, self.var_spritesheet.get(), self.var_separate.get())
 
     def log(self, message):
         self.log_text.insert("end", message + "\n")

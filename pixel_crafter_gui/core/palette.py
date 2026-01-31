@@ -20,6 +20,23 @@ def sort_colors(colors, method="Luminance"):
     
     return colors
 
+def export_as_gpl(path, colors, name="Pixlato Export"):
+    """
+    Exports a list of RGB tuples as a GIMP Palette (.gpl) file.
+    """
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("GIMP Palette\n")
+            f.write(f"Name: {name}\n")
+            f.write("Columns: 0\n")
+            f.write("#\n")
+            for i, (r, g, b) in enumerate(colors):
+                f.write(f"{r:>3} {g:>3} {b:>3}\tIndex {i}\n")
+        return True
+    except Exception as e:
+        print(f"Error exporting GPL: {e}")
+        return False
+
 def apply_palette_unified(img, palette_name="Original", custom_colors=None, dither=True):
     """
     Unified Pipeline for Palette Application.

@@ -304,6 +304,12 @@ class PixelApp(ctk.CTk):
         self.sort_menu.place(relx=0.0, rely=0.0, x=325, y=17, anchor="nw")
         self.theme_manager.register_widget(self.sort_menu)
 
+        self.btn_export_gpl = ctk.CTkButton(self.preview_frame, text="⬇ GPL", width=50, height=24, 
+                                           font=("Arial", 10, "bold"), command=self.export_used_palette_gpl)
+        self.btn_export_gpl.place(relx=0.0, rely=0.0, x=420, y=17, anchor="nw")
+        self.theme_manager.register_widget(self.btn_export_gpl)
+        ToolTip(self.btn_export_gpl, "GIMP Palette (.gpl) Export")
+
         self.res_info_frame = ctk.CTkFrame(self.preview_frame, width=120, height=28, corner_radius=6, border_width=1, border_color="#444", fg_color="#2b2b2b")
         self.res_info_frame.place(relx=1.0, rely=0.0, x=-15, y=15, anchor="ne")
         self.res_info_frame.pack_propagate(False)
@@ -758,9 +764,18 @@ class PixelApp(ctk.CTk):
                 process_gif(p, f, int(self.slider_pixel.get()), pn, pp, self.check_dither.get(), self.check_outline.get())
                 self.btn_save.configure(text=self.locale.get("sidebar_export"), state="normal")
             else:
-                final = self.raw_pixel_image if self.mode_switch.get() == "Pixelate" else self.preview_image
+                final = self.raw_pixel_image if self.mode_switch.get() == self.locale.get("save_pixelate") else self.preview_image
                 if f.lower().endswith(('.jpg', '.bmp')): final = final.convert("RGB")
-                final.save(f)
+                
+                # Metadata embedding for PNG
+                if f.lower().endswith('.png'):
+                    from PIL.PngImagePlugin import PngInfo
+                    metadata = PngInfo()
+                    params_json = json.dumps(self.capture_ui_state())
+                    metadata.add_text("Pixlato:Params", params_json)
+                    final.save(f, pnginfo=metadata)
+                else:
+                    final.save(f)
 
     def add_image_to_inventory(self):
         paths = filedialog.askopenfilenames(parent=self, filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")])
@@ -809,13 +824,31 @@ class PixelApp(ctk.CTk):
             if self.image_manager.count() > 0:
                 self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
+    def export_used_palette_gpl(self):
+        if not hasattr(self, "raw_pixel_image") or not self.raw_pixel_image:
+            return
+            
+        colors = self.extract_used_colors(self.raw_pixel_image)
+        if not colors:
+            return
+            
+        f = filedialog.asksaveasfilename(parent=self, defaultextension=".gpl", 
+                                         filetypes=[("GIMP Palette", "*.gpl")],
+                                         initialfile="pixlato_palette.gpl")
+        if f:
+            from core.palette import export_as_gpl
+            if export_as_gpl(f, colors):
+                self.status_label.configure(text="✅ GPL Exported")
+                self.after(3000, lambda: self.status_label.configure(text=""))
+
     def batch_export(self):
         if self.image_manager.count() > 0: 
             BatchExportWindow(self, self._start_batch_export_process)
 
-    def _start_batch_export_process(self, od, fs, win):
+    def _start_batch_export_process(self, od, fs, win, ss=False, sep=False):
         import concurrent.futures
         from collections import defaultdict
+        import math
         g, mode, entries = self.capture_ui_state(), self.setting_mode_switch.get(), self.image_manager.get_all()
         
         # Group by original path to handle GIFs
@@ -823,7 +856,7 @@ class PixelApp(ctk.CTk):
         for e in entries:
             groups[e["path"]].append(e)
 
-        def process_frame(e, target_params):
+        def process_frame_layered(e, target_params):
             p = target_params
             img = e["pil_image"].convert("RGBA")
             if p.get("remove_bg"): img = remove_background(img)
@@ -834,17 +867,40 @@ class PixelApp(ctk.CTk):
             small = img.resize((sw, sh), resample=Image.BOX)
             pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
             proc = apply_palette_unified(small, pn, pp, p.get("dither", True))
-            if p.get("outline"): proc = add_outline(proc)
-            return proc.resize(e["pil_image"].size, Image.NEAREST)
+            
+            # Base Layer (No Outline)
+            base = proc.resize(e["pil_image"].size, Image.NEAREST)
+            
+            # Outline Layer
+            outline_img = None
+            if p.get("outline"):
+                out_small = add_outline(proc)
+                # Create a mask where only the outline exists
+                # Pillow ImageChops.difference or simple subtraction
+                from PIL import ImageChops
+                diff = ImageChops.difference(out_small, proc)
+                outline_img = diff.resize(e["pil_image"].size, Image.NEAREST)
+                final = out_small.resize(e["pil_image"].size, Image.NEAREST)
+            else:
+                final = base
+                
+            return final, base, outline_img
 
         def task_individual(e, f):
             try:
                 p = e["params"] if mode == "Individual" and e["params"] else g
-                final = process_frame(e, p)
-                if f.lower() in ["jpg", "bmp"]: final = final.convert("RGB")
-                save_name = f"{os.path.basename(e['name'])}_pixel.{f.lower()}"
-                final.save(os.path.join(od, save_name))
-                return True, f"✅ {e['name']} ({f})"
+                final, base, outline = process_frame_layered(e, p)
+                
+                bn = os.path.basename(e['name'])
+                if sep and outline:
+                    # Separate files
+                    base.save(os.path.join(od, f"{bn}_base.png"))
+                    outline.save(os.path.join(od, f"{bn}_outline.png"))
+                    return True, f"✅ Layers: {bn}"
+                else:
+                    if f.lower() in ["jpg", "bmp"]: final = final.convert("RGB")
+                    final.save(os.path.join(od, f"{bn}_pixel.{f.lower()}"))
+                    return True, f"✅ {bn} ({f})"
             except Exception as ex: return False, f"❌ {e['name']} ({f}): {ex}"
 
         def task_gif_group(path, frames):
@@ -852,40 +908,58 @@ class PixelApp(ctk.CTk):
                 processed_frames = []
                 for e in frames:
                     p = e["params"] if mode == "Individual" and e["params"] else g
-                    processed_frames.append(process_frame(e, p).convert("P", palette=Image.ADAPTIVE))
+                    final, _, _ = process_frame_layered(e, p)
+                    processed_frames.append(final.convert("P", palette=Image.ADAPTIVE))
                 
                 base_name = os.path.splitext(os.path.basename(path))[0]
                 save_path = os.path.join(od, f"{base_name}_pixel.gif")
-                
-                # Attempt to get original duration
                 dur = 100
                 try:
-                    with Image.open(path) as orig:
-                        dur = orig.info.get('duration', 100)
+                    with Image.open(path) as orig: dur = orig.info.get('duration', 100)
                 except: pass
-
                 if processed_frames:
-                    processed_frames[0].save(
-                        save_path,
-                        save_all=True,
-                        append_images=processed_frames[1:],
-                        duration=dur,
-                        loop=0,
-                        optimize=False
-                    )
+                    processed_frames[0].save(save_path, save_all=True, append_images=processed_frames[1:],
+                                            duration=dur, loop=0, optimize=False)
                 return True, f"✅ GIF: {base_name}"
             except Exception as ex: return False, f"❌ GIF: {ex}"
+
+        def task_spritesheet(path, frames):
+            try:
+                processed = []
+                for e in frames:
+                    p = e["params"] if mode == "Individual" and e["params"] else g
+                    final, _, _ = process_frame_layered(e, p)
+                    processed.append(final)
+                if not processed: return False, "No frames"
+                n = len(processed)
+                cols = math.ceil(math.sqrt(n))
+                rows = math.ceil(n / cols)
+                fw, fh = processed[0].size
+                sheet = Image.new("RGBA", (cols * fw, rows * fh), (0,0,0,0))
+                for i, img in enumerate(processed):
+                    r, c = divmod(i, cols)
+                    sheet.paste(img, (c * fw, r * fh))
+                base_name = os.path.splitext(os.path.basename(path))[0]
+                sheet.save(os.path.join(od, f"{base_name}_spritesheet.png"))
+                return True, f"✅ Sheet: {base_name}"
+            except Exception as ex: return False, f"❌ Sheet: {ex}"
 
         def run():
             done = 0
             tasks = []
+            if ss:
+                for path, frames in groups.items():
+                    if len(frames) > 1: tasks.append(("spritesheet", path, frames))
+            
             for f in fs:
                 if f == "GIF":
-                    for path, frames in groups.items():
-                        tasks.append(("gif", path, frames))
+                    for path, frames in groups.items(): tasks.append(("gif", path, frames))
                 else:
-                    for e in entries:
-                        tasks.append(("individual", e, f))
+                    for e in entries: tasks.append(("individual", e, f))
+            
+            # If ONLY separation is requested without specific formats, we still run individual
+            if sep and not tasks:
+                for e in entries: tasks.append(("individual", e, "PNG"))
 
             total = len(tasks)
             if total == 0:
@@ -895,11 +969,9 @@ class PixelApp(ctk.CTk):
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
                 fut = []
                 for t in tasks:
-                    if t[0] == "gif":
-                        fut.append(ex.submit(task_gif_group, t[1], t[2]))
-                    else:
-                        fut.append(ex.submit(task_individual, t[1], t[2]))
-                
+                    if t[0] == "gif": fut.append(ex.submit(task_gif_group, t[1], t[2]))
+                    elif t[0] == "spritesheet": fut.append(ex.submit(task_spritesheet, t[1], t[2]))
+                    else: fut.append(ex.submit(task_individual, t[1], t[2]))
                 for f in concurrent.futures.as_completed(fut):
                     done += 1
                     s, m = f.result()
