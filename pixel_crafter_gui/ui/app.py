@@ -294,6 +294,8 @@ class PixelApp(ctk.CTk):
                                             command=self.clear_bg_seeds)
         self.locale.register(self.btn_clear_seeds, "btn_clear_seeds")
         
+        self.label_interactive_helper = ctk.CTkLabel(self.param_frame, text="", font=("Arial", 11), text_color="#e67e22", wraplength=280)
+        
         self.check_outline = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
         self.check_outline.pack(pady=5, fill="x")
         self.locale.register(self.check_outline, "sidebar_outline")
