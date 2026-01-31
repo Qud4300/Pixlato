@@ -21,7 +21,7 @@
     "bg_ai": "AI 자동 (Auto)",
     "bg_interactive": "지점 지정 (Manual)",
     "btn_clear_seeds": "지점 초기화",
-    "msg_interactive_tip": "💡 마우스 왼쪽: 배경 지정 | 오른쪽: 피사체 보호",
+    "msg_interactive_tip": "👆 배경 클릭 (왼쪽: 지정 / 오른쪽: 보호)",
     "sidebar_outline": "외곽선 추가 (Outline)",
     "sidebar_edge_enhance": "내부 엣지 강조 (Edge)",
     "sidebar_edge_sens": "엣지 강도:",

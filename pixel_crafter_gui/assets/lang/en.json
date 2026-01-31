@@ -21,7 +21,7 @@
     "bg_ai": "AI Auto",
     "bg_interactive": "Interactive (Point)",
     "btn_clear_seeds": "Clear Points",
-    "msg_interactive_tip": "💡 Left Click: Mark Background | Right Click: Protect Subject",
+    "msg_interactive_tip": "👆 Click Canvas (Left: BG / Right: Protect)",
     "sidebar_outline": "Add Outline",
     "sidebar_edge_enhance": "Internal Edge Enhance",
     "sidebar_edge_sens": "Edge Sensitivity:",

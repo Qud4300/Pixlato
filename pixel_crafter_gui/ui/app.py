@@ -616,10 +616,12 @@ class PixelApp(ctk.CTk):
         mode = self._get_logical(value, "bg_mode")
         if mode == "Interactive":
             self.btn_clear_seeds.pack(after=self.option_bg_mode, pady=2, fill="x")
-            self.status_label.configure(text=self.locale.get("msg_interactive_tip") if self.locale.get("msg_interactive_tip") != "msg_interactive_tip" else "Left Click: BG | Right Click: FG")
+            self.status_label.configure(text=self.locale.get("msg_interactive_tip"), text_color="#e67e22")
+            self.preview_canvas.configure(cursor="hand2")
         else:
             self.btn_clear_seeds.pack_forget()
-            self.status_label.configure(text="")
+            self.status_label.configure(text="", text_color="#2ecc71")
+            self.preview_canvas.configure(cursor="")
         self.on_param_change()
 
     def clear_bg_seeds(self):
