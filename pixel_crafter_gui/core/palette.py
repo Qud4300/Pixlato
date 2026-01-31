@@ -1,5 +1,24 @@
 from PIL import Image, ImageEnhance, ImageChops
 import numpy as np
+import colorsys
+
+def sort_colors(colors, method="Luminance"):
+    """
+    Sorts a list of RGB tuples (0-255).
+    Methods: "Luminance", "Hue", "Original"
+    """
+    if method == "Original" or not colors:
+        return colors
+
+    if method == "Luminance":
+        # Relative luminance formula (ordered by brightness, descending)
+        return sorted(colors, key=lambda c: (0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2]), reverse=True)
+    
+    if method == "Hue":
+        # Sort by Hue in HSV space
+        return sorted(colors, key=lambda c: colorsys.rgb_to_hsv(c[0]/255.0, c[1]/255.0, c[2]/255.0)[0])
+    
+    return colors
 
 def apply_palette_unified(img, palette_name="Original", custom_colors=None, dither=True):
     """

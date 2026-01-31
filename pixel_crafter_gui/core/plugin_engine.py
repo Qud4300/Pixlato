@@ -3,8 +3,10 @@ import os
 import random
 import math
 import builtins
+import torch
+import numpy as np
 from abc import ABC, abstractmethod
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 class BasePlugin(ABC):
     """
@@ -33,7 +35,9 @@ class PluginEngine:
             "PRE_DOWNSAMPLE": [],
             "POST_DOWNSAMPLE": [],
             "POST_PALETTE": [],
-            "FINAL_IMAGE": []
+            "FINAL_IMAGE": [],
+            "UI_PRE_RENDER": [],
+            "UI_POST_RENDER": []
         }
 
     def discover_plugins(self):
@@ -79,8 +83,12 @@ class PluginEngine:
                 "__file__": script_path,
                 "BasePlugin": BasePlugin,
                 "Image": Image,
+                "ImageDraw": ImageDraw,
+                "ImageFont": ImageFont,
                 "random": random,
-                "math": math
+                "math": math,
+                "torch": torch,
+                "np": np
             }
             
             # Execute script to define the plugin class

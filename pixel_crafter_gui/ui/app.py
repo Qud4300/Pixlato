@@ -292,6 +292,18 @@ class PixelApp(ctk.CTk):
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.palette_inspector = PaletteInspector(self.preview_frame, width=300, height=28, click_callback=self.on_palette_color_click, corner_radius=6, border_width=1, border_color="#444")
         self.palette_inspector.place(relx=0.0, rely=0.0, x=15, y=15, anchor="nw")
+        
+        self.palette_sort_mode = "Original"
+        self.label_palette_sort = ctk.CTkLabel(self.preview_frame, text="Sort:", font=("Arial", 10), text_color="#888")
+        self.label_palette_sort.place(relx=0.0, rely=0.0, x=315, y=2, anchor="nw")
+        self.locale.register(self.label_palette_sort, "sort_palette")
+
+        self.sort_menu = ctk.CTkOptionMenu(self.preview_frame, values=["Original", "Luminance", "Hue"], 
+                                          width=90, height=24, font=("Arial", 10), command=self.on_palette_sort_change)
+        self.sort_menu.set("Original")
+        self.sort_menu.place(relx=0.0, rely=0.0, x=325, y=17, anchor="nw")
+        self.theme_manager.register_widget(self.sort_menu)
+
         self.res_info_frame = ctk.CTkFrame(self.preview_frame, width=120, height=28, corner_radius=6, border_width=1, border_color="#444", fg_color="#2b2b2b")
         self.res_info_frame.place(relx=1.0, rely=0.0, x=-15, y=15, anchor="ne")
         self.res_info_frame.pack_propagate(False)
@@ -632,21 +644,42 @@ class PixelApp(ctk.CTk):
             self._pending_reprocess = False
             self._start_threaded_process(*self._pending_source)
 
+    def on_palette_sort_change(self, mode):
+        self.palette_sort_mode = mode
+        if hasattr(self, "raw_pixel_image") and self.raw_pixel_image:
+            clrs = self.extract_used_colors(self.raw_pixel_image)
+            self.palette_inspector.update_colors(clrs)
+
     def extract_used_colors(self, pil_img):
+        from core.palette import sort_colors
         tmp = pil_img.convert("RGB")
         colors = tmp.getcolors(maxcolors=4096)
         if not colors: return []
-        sorted_clrs = sorted(colors, key=lambda x: x[0], reverse=True)
-        return [c[1] for c in sorted_clrs[:16]]
+        # Extract RGB tuples from (count, color) list
+        raw_colors = [c[1] for c in colors]
+        # Sort by frequency first to get top 16, then apply user sorting
+        freq_sorted = sorted(colors, key=lambda x: x[0], reverse=True)
+        top_16 = [c[1] for c in freq_sorted[:16]]
+        return sort_colors(top_16, self.palette_sort_mode)
 
     def display_image(self):
         if not self.preview_image: return
+        params = self.capture_ui_state()
+        
+        # UI_PRE_RENDER Hook: Modification of the full-res preview image
+        render_img = self.plugin_engine.execute_hook("UI_PRE_RENDER", self.preview_image, params)
+        
         cw, ch = self.preview_canvas.winfo_width(), self.preview_canvas.winfo_height()
         if cw <= 1: cw, ch = 800, 600
-        iw, ih = self.preview_image.size
+        iw, ih = render_img.size
         if self.preview_zoom == -1: self.preview_zoom = min(cw / iw, ch / ih) * 0.9
         nw, nh = int(iw * self.preview_zoom), int(ih * self.preview_zoom)
-        disp = self.preview_image.resize((nw, nh), Image.NEAREST)
+        
+        disp = render_img.resize((nw, nh), Image.NEAREST)
+        
+        # UI_POST_RENDER Hook: Modification of the zoomed display image (e.g., UI overlays)
+        disp = self.plugin_engine.execute_hook("UI_POST_RENDER", disp, params)
+        
         self.tk_preview = ImageTk.PhotoImage(disp)
         if self.canvas_image_id: self.preview_canvas.delete(self.canvas_image_id)
         self.canvas_image_id = self.preview_canvas.create_image(cw//2, ch//2, image=self.tk_preview, anchor="center")
@@ -754,35 +787,96 @@ class PixelApp(ctk.CTk):
 
     def _start_batch_export_process(self, od, fs, win):
         import concurrent.futures
+        from collections import defaultdict
         g, mode, entries = self.capture_ui_state(), self.setting_mode_switch.get(), self.image_manager.get_all()
-        def task(e, f):
+        
+        # Group by original path to handle GIFs
+        groups = defaultdict(list)
+        for e in entries:
+            groups[e["path"]].append(e)
+
+        def process_frame(e, target_params):
+            p = target_params
+            img = e["pil_image"].convert("RGBA")
+            if p.get("remove_bg"): img = remove_background(img)
+            if p.get("edge_enhance"): 
+                from core.processor import enhance_internal_edges
+                img = enhance_internal_edges(img, p["edge_sensitivity"])
+            sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
+            small = img.resize((sw, sh), resample=Image.BOX)
+            pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
+            proc = apply_palette_unified(small, pn, pp, p.get("dither", True))
+            if p.get("outline"): proc = add_outline(proc)
+            return proc.resize(e["pil_image"].size, Image.NEAREST)
+
+        def task_individual(e, f):
             try:
                 p = e["params"] if mode == "Individual" and e["params"] else g
-                img = e["pil_image"].convert("RGBA")
-                if p.get("remove_bg"): img = remove_background(img)
-                if p.get("edge_enhance"): 
-                    from core.processor import enhance_internal_edges
-                    img = enhance_internal_edges(img, p["edge_sensitivity"])
-                sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
-                small = img.resize((sw, sh), resample=Image.BOX)
-                pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
-                proc = apply_palette_unified(small, pn, pp, p.get("dither", True))
-                if p.get("outline"): proc = add_outline(proc)
-                final = proc.resize(e["pil_image"].size, Image.NEAREST)
+                final = process_frame(e, p)
                 if f.lower() in ["jpg", "bmp"]: final = final.convert("RGB")
-                final.save(os.path.join(od, f"{os.path.basename(e['name'])}_pixel.{f.lower()}"))
-                return True, f"✅ {e['name']}"
-            except Exception as e: return False, f"❌ {e}"
-        
+                save_name = f"{os.path.basename(e['name'])}_pixel.{f.lower()}"
+                final.save(os.path.join(od, save_name))
+                return True, f"✅ {e['name']} ({f})"
+            except Exception as ex: return False, f"❌ {e['name']} ({f}): {ex}"
+
+        def task_gif_group(path, frames):
+            try:
+                processed_frames = []
+                for e in frames:
+                    p = e["params"] if mode == "Individual" and e["params"] else g
+                    processed_frames.append(process_frame(e, p).convert("P", palette=Image.ADAPTIVE))
+                
+                base_name = os.path.splitext(os.path.basename(path))[0]
+                save_path = os.path.join(od, f"{base_name}_pixel.gif")
+                
+                # Attempt to get original duration
+                dur = 100
+                try:
+                    with Image.open(path) as orig:
+                        dur = orig.info.get('duration', 100)
+                except: pass
+
+                if processed_frames:
+                    processed_frames[0].save(
+                        save_path,
+                        save_all=True,
+                        append_images=processed_frames[1:],
+                        duration=dur,
+                        loop=0,
+                        optimize=False
+                    )
+                return True, f"✅ GIF: {base_name}"
+            except Exception as ex: return False, f"❌ GIF: {ex}"
+
         def run():
             done = 0
+            tasks = []
+            for f in fs:
+                if f == "GIF":
+                    for path, frames in groups.items():
+                        tasks.append(("gif", path, frames))
+                else:
+                    for e in entries:
+                        tasks.append(("individual", e, f))
+
+            total = len(tasks)
+            if total == 0:
+                self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
+                return
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-                fut = [ex.submit(task, e, f) for e in entries for f in fs]
+                fut = []
+                for t in tasks:
+                    if t[0] == "gif":
+                        fut.append(ex.submit(task_gif_group, t[1], t[2]))
+                    else:
+                        fut.append(ex.submit(task_individual, t[1], t[2]))
+                
                 for f in concurrent.futures.as_completed(fut):
                     done += 1
                     s, m = f.result()
                     self.after(0, lambda m=m: win.log(m))
-                    self.after(0, lambda d=done, tl=len(fut): win.update_progress(d, tl))
+                    self.after(0, lambda d=done, tl=total: win.update_progress(d, tl))
             self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
         
         threading.Thread(target=run, daemon=True).start()

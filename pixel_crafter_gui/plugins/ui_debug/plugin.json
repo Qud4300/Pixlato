@@ -1,0 +1,8 @@
+{
+    "id": "ui_debug",
+    "name": "UI Debug Helper",
+    "version": "1.0",
+    "description": "Adds a debug border using UI hooks.",
+    "author": "Pixlato Agent",
+    "hooks": ["UI_POST_RENDER"]
+}

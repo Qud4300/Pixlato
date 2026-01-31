@@ -661,11 +661,12 @@ class BatchExportWindow(ctk.CTkToplevel):
             "PNG": ctk.BooleanVar(value=True),
             "JPG": ctk.BooleanVar(value=False),
             "BMP": ctk.BooleanVar(value=False),
-            "WEBP": ctk.BooleanVar(value=False)
+            "WEBP": ctk.BooleanVar(value=False),
+            "GIF": ctk.BooleanVar(value=False)
         }
         
         for fmt, var in self.format_vars.items():
-            ctk.CTkCheckBox(format_frame, text=fmt, variable=var).pack(side="left", padx=15, pady=10)
+            ctk.CTkCheckBox(format_frame, text=fmt, variable=var).pack(side="left", padx=10, pady=10)
 
         # Output Directory Section
         dir_frame = ctk.CTkFrame(self)
