@@ -1,0 +1,8 @@
+{
+    "id": "ai_sharpen",
+    "name": "AI Sharpen (PyTorch)",
+    "version": "1.0",
+    "description": "Uses PyTorch tensor operations to enhance image edges before pixelation.",
+    "author": "Pixlato Agent",
+    "hooks": ["PRE_DOWNSAMPLE"]
+}

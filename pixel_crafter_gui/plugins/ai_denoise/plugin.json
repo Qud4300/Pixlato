@@ -1,0 +1,8 @@
+{
+    "id": "ai_denoise",
+    "name": "AI Denoise (PyTorch)",
+    "version": "1.0",
+    "description": "Adaptive smoothing to remove noise while preserving edges using tensor-based Bilateral filtering.",
+    "author": "Pixlato Agent",
+    "hooks": ["PRE_PROCESS"]
+}
