@@ -1,0 +1,41 @@
+# Pixlato Shared Source License
+
+본 소프트웨어 및 관련 문서 파일(이하 "소프트웨어")의 소스 코드는 참조, 학습 및 개인적인 연구 목적으로만 공개됩니다. 본 소프트웨어를 이용하는 모든 사용자는 아래의 조건을 준수해야 합니다.
+
+### 1. 허용되는 이용 범위 (Permitted Use)
+- 사용자는 본 소프트웨어의 소스 코드를 자유롭게 열람하고, 개인적인 학습 및 비상업적 연구를 목적으로 수정 및 실행할 수 있습니다.
+- GitHub 플랫폼 내에서 본 저장소를 '포크(Fork)'하여 자신의 계정에 보관하는 행위는 GitHub 서비스 이용 약관에 따라 명시적으로 허용됩니다.
+
+### 2. 무단 재배포 금지 (Prohibition of Unauthorized Redistribution)
+- 사용자가 저작권자의 명시적 허가 없이 본 프로젝트의 소스 코드 혹은 실행 파일을 GitHub 외부로 재배포하는 행위는 엄격히 금지됩니다.
+- **배포가 필요한 경우 반드시 사전에 저작권자에게 용도와 경로를 고지하고 명시적인 승인을 받아야 합니다.** 저작권자는 부적절하다고 판단될 경우 배포 중단 및 승인 거부를 요구할 권리를 가집니다.
+
+### 3. 상업적 이용 금지 (Non-Commercial)
+- 본 소프트웨어를 사용하여 수익을 창출하거나, 영리 기업 내부에서 상업적 용도로 사용하는 행위, 또는 소프트웨어 자체를 판매하는 행위는 엄격히 금지됩니다.
+
+### 4. 무보증 및 면책 (Disclaimer)
+- 본 소프트웨어는 "있는 그대로" 제공되며, 명시적 또는 묵시적인 어떠한 보증도 제공하지 않습니다. 저작권자는 본 소프트웨어의 사용으로 인해 발생하는 어떠한 손해나 책임에 대해서도 책임을 지지 않습니다.
+
+---
+본 라이선스의 조건을 위반하는 경우, 소프트웨어 이용 권한은 자동으로 종료됩니다.
+
+
+
+The source code of this software and associated documentation files (the "Software") is disclosed for reference, learning, and personal research purposes only. All users of this Software must comply with the following conditions.
+
+### 1. Permitted Use
+- Users may freely view, modify, and execute the source code of this Software for personal learning and non-commercial research purposes.
+- Forking this repository within the GitHub platform to keep it in one's account is explicitly permitted in accordance with the GitHub Terms of Service.
+
+### 2. Prohibition of Unauthorized Redistribution
+- Redistributing the source code or executable files of this project outside of GitHub without the explicit permission of the copyright holder is strictly prohibited.
+- **If redistribution is required, the user must notify the copyright holder of the purpose and path in advance and obtain explicit approval.** The copyright holder reserves the right to request the cessation of distribution or deny approval if deemed inappropriate.
+
+### 3. Non-Commercial
+- Creating revenue using this Software, using it for commercial purposes within a for-profit enterprise, or selling the Software itself is strictly prohibited.
+
+### 4. Disclaimer
+- This Software is provided "as is", without warranty of any kind, express or implied. The copyright holder shall not be liable for any damages or liability arising from the use of this Software.
+
+---
+Failure to comply with the terms of this license will automatically terminate your rights to use the Software.
