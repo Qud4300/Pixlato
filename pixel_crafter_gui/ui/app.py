@@ -11,12 +11,13 @@ import time
 # Import core logic
 from core.processor import (pixelate_image, upscale_for_preview, add_outline, 
                             remove_background, apply_grain_effect, remove_background_ai, 
-                            remove_background_interactive, is_directml_supported)
+                            remove_background_interactive, is_directml_supported,
+                            normalize_image_geometry)
 from core.palette import apply_palette_unified
 from core.project_manager import ProjectManager
 from core.gif_processor import process_gif
 from core.image_manager import ImageManager
-from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector, BatchExportWindow, PluginWindow
+from ui.components import IntSpinbox, CustomPaletteWindow, ToolTip, PaletteInspector, BatchExportWindow, PluginWindow, bind_ctk_slider_wheel
 from ui.theme_manager import ThemeManager
 from ui.locale_manager import LocaleManager
 from core.plugin_engine import PluginEngine
@@ -75,6 +76,11 @@ class PixelApp(ctk.CTk):
         self.fg_seeds = []
         self._is_processing = False
         self._pending_reprocess = False
+        self._is_restoring = False
+        self.global_params = self.get_hardcoded_defaults()
+        self.cached_defaults = self.get_hardcoded_defaults()
+        self.inventory_reset_buttons = {}
+        self.inventory_active_checkboxes = {}
 
         self.load_default_palette()
         self.load_presets()
@@ -135,7 +141,7 @@ class PixelApp(ctk.CTk):
         self.locale.register(self.label_setting_mode, "sidebar_setting_mode")
 
         self.setting_mode_switch = ctk.CTkSegmentedButton(self.sidebar, values=[self.locale.get("mode_global"), self.locale.get("mode_individual")], command=self.on_setting_mode_change)
-        self.setting_mode_switch.set(self.locale.get("mode_global"))
+        self.setting_mode_switch.set(self.locale.get("mode_individual"))
         self.setting_mode_switch.pack(pady=5, padx=20, fill="x")
         self.theme_manager.register_widget(self.setting_mode_switch)
 
@@ -187,11 +193,12 @@ class PixelApp(ctk.CTk):
         self.locale.register(self.label_pixel, "sidebar_pixel_size")
         self.pixel_spin = IntSpinbox(pixel_header, from_=1, to=128, width=100, command=self.update_pixel_from_spinbox)
         self.pixel_spin.pack(side="right")
-        self.pixel_spin.set(8)
+        self.pixel_spin.set(2)
         self.slider_pixel = ctk.CTkSlider(self.param_frame, from_=1, to=128, number_of_steps=127, command=self.update_pixel_from_slider)
-        self.slider_pixel.set(8)
+        self.slider_pixel.set(2)
         self.slider_pixel.pack(pady=(2, 5), fill="x")
         self.theme_manager.register_widget(self.slider_pixel)
+        bind_ctk_slider_wheel(self.slider_pixel)
 
         # Params: Color Limit
         self.color_limit_group = ctk.CTkFrame(self.param_frame, fg_color="transparent")
@@ -208,6 +215,14 @@ class PixelApp(ctk.CTk):
         self.color_slider.set(16)
         self.color_slider.pack(pady=(2, 5), fill="x")
         self.theme_manager.register_widget(self.color_slider)
+        bind_ctk_slider_wheel(self.color_slider)
+
+        # Params: Auto Optimal Toggle (Task 48.1)
+        self.check_auto_optimal = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_auto_optimal_toggle)
+        self.check_auto_optimal.deselect()
+        self.check_auto_optimal.pack(pady=5, fill="x")
+        self.locale.register(self.check_auto_optimal, "sidebar_auto_optimal")
+        self.theme_manager.register_widget(self.check_auto_optimal)
 
         # Params: Palette & FX
         self.label_pal_preset = ctk.CTkLabel(self.param_frame, text="", anchor="w")
@@ -220,7 +235,7 @@ class PixelApp(ctk.CTk):
         self.theme_manager.register_widget(self.option_palette)
 
         # Extraction & Mapping Policies
-        self.label_extract_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_extract_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w", wraplength=280, justify="left")
         self.label_extract_policy.pack(pady=(10, 0), fill="x")
         self.locale.register(self.label_extract_policy, "sidebar_extract_policy")
         self.extract_policy_switch = ctk.CTkSegmentedButton(self.param_frame, values=[self.locale.get("policy_standard"), self.locale.get("policy_aesthetic")], 
@@ -229,7 +244,7 @@ class PixelApp(ctk.CTk):
         self.extract_policy_switch.pack(pady=5, fill="x")
         self.theme_manager.register_widget(self.extract_policy_switch)
 
-        self.label_mapping_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_mapping_policy = ctk.CTkLabel(self.param_frame, text="", anchor="w", wraplength=280, justify="left")
         self.label_mapping_policy.pack(pady=(10, 0), fill="x")
         self.locale.register(self.label_mapping_policy, "sidebar_mapping_policy")
         self.mapping_policy_switch = ctk.CTkSegmentedButton(self.param_frame, values=[self.locale.get("policy_classic"), self.locale.get("policy_perceptual")], command=self.on_param_change)
@@ -257,6 +272,7 @@ class PixelApp(ctk.CTk):
             sld.set(0.4 if key=="sat" else 0.3)
             sld.pack(fill="x")
             self.theme_manager.register_widget(sld)
+            bind_ctk_slider_wheel(sld)
             self.rap_weights[key] = (sld, val_lbl)
 
         self.btn_custom_pal = ctk.CTkButton(self.param_frame, text="", command=self.open_custom_palette, fg_color="#8e44ad", hover_color="#9b59b6")
@@ -264,7 +280,7 @@ class PixelApp(ctk.CTk):
         self.locale.register(self.btn_custom_pal, "sidebar_edit_custom_pal")
         
         self.check_dither = ctk.CTkCheckBox(self.param_frame, text="", command=self.on_param_change)
-        self.check_dither.select()
+        self.check_dither.deselect()
         self.check_dither.pack(pady=5, fill="x")
         self.locale.register(self.check_dither, "sidebar_dithering")
         self.theme_manager.register_widget(self.check_dither)
@@ -348,7 +364,7 @@ class PixelApp(ctk.CTk):
         self.update_grain_controls_state()
 
         # Downsample & Presets
-        self.label_downsample = ctk.CTkLabel(self.param_frame, text="", anchor="w")
+        self.label_downsample = ctk.CTkLabel(self.param_frame, text="", anchor="w", wraplength=280, justify="left")
         self.label_downsample.pack(pady=(5, 0), fill="x")
         self.locale.register(self.label_downsample, "sidebar_downsample")
         self.option_downsample = ctk.CTkOptionMenu(self.param_frame, values=[self.locale.get("opt_standard"), self.locale.get("opt_kmeans")], command=self.on_param_change)
@@ -377,6 +393,11 @@ class PixelApp(ctk.CTk):
         self.option_theme.set("Default Dark")
         self.option_theme.pack(pady=5, fill="x")
         self.theme_manager.register_widget(self.option_theme)
+        
+        self.btn_custom_accent = ctk.CTkButton(self.param_frame, text="🎨 Accent Color", height=24, 
+                                              command=self.pick_custom_accent)
+        self.btn_custom_accent.pack(pady=2, fill="x")
+        self.theme_manager.register_widget(self.btn_custom_accent)
 
         # 3. Main Preview Area
         self.preview_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="#1a1a1a")
@@ -432,19 +453,101 @@ class PixelApp(ctk.CTk):
         self.label_inv_header.pack(pady=(5, 0))
         self.inventory_scroll = ctk.CTkScrollableFrame(self.inventory_frame, width=160)
         self.inventory_scroll.pack(fill="both", expand=True, padx=5, pady=5)
-        self.label_inv_fmt = ctk.CTkLabel(self.inventory_frame, text="", anchor="w")
-        self.label_inv_fmt.pack(pady=(5, 0), padx=10, fill="x")
-        self.locale.register(self.label_inv_fmt, "inv_format")
-        self.format_combo = ctk.CTkOptionMenu(self.inventory_frame, values=["PNG", "JPG", "BMP", "WEBP"])
-        self.format_combo.set("PNG")
-        self.format_combo.pack(pady=5, padx=10, fill="x")
-        self.theme_manager.register_widget(self.format_combo)
+        
         self.btn_batch_export = ctk.CTkButton(self.inventory_frame, text="", command=self.batch_export, height=35, fg_color="#3498db")
         self.btn_batch_export.pack(pady=10, padx=10, fill="x", side="bottom")
         self.locale.register(self.btn_batch_export, "inv_save_all")
 
         # Initial Text Sync
         self.update_ui_text()
+        
+        # Define default state for resets
+        self.default_params = self.get_hardcoded_defaults()
+
+    def get_hardcoded_defaults(self):
+        """Returns the absolute initial default parameters for the app."""
+        return {
+            "save_mode": "Pixelate",
+            "pixel_size": 2,
+            "color_count": 16,
+            "palette_mode": "Limited",
+            "extract_policy": "Standard",
+            "mapping_policy": "Classic",
+            "rap_w_sat": 0.4,
+            "rap_w_con": 0.3,
+            "rap_w_rar": 0.3,
+            "bg_mode": "None",
+            "bg_seeds": [],
+            "fg_seeds": [],
+            "dither": False,
+            "outline": False,
+            "edge_enhance": False,
+            "edge_sensitivity": 1.0,
+            "grain_enabled": False,
+            "grain_intensity": 15,
+            "auto_optimal": False,
+            "downsample_method": "Standard",
+            "custom_colors": [(0, 0, 0)] * 16
+        }
+
+    def is_params_modified(self, params):
+        """Perform a deep comparison between current params and cached defaults."""
+        if not params: return False
+        
+        # Keys that use float comparison with tolerance
+        float_keys = ["rap_w_sat", "rap_w_con", "rap_w_rar", "edge_sensitivity"]
+        
+        # Regular keys
+        keys_to_check = [
+            "save_mode", "pixel_size", "color_count", "palette_mode",
+            "extract_policy", "mapping_policy", "bg_mode", "dither", 
+            "outline", "edge_enhance", "grain_enabled", "grain_intensity", 
+            "downsample_method", "auto_optimal"
+        ]
+        
+        for k in keys_to_check:
+            if params.get(k) != self.cached_defaults.get(k):
+                return True
+                
+        for k in float_keys:
+            v1 = params.get(k, 0)
+            v2 = self.cached_defaults.get(k, 0)
+            if abs(float(v1) - float(v2)) > 1e-5:
+                return True
+        
+        # Deep comparison for lists
+        if list(params.get("bg_seeds", [])) != list(self.cached_defaults.get("bg_seeds", [])): return True
+        if list(params.get("fg_seeds", [])) != list(self.cached_defaults.get("fg_seeds", [])): return True
+        if [tuple(c) for c in params.get("custom_colors", [])] != [tuple(c) for c in self.cached_defaults.get("custom_colors", [])]: return True
+        
+        return False
+
+    def update_reset_button_visibility(self, iid, force_check=False):
+        """
+        Updates the visibility of the reset button for a specific item.
+        Optimized using 'is_dirty' bit to avoid redundant comparisons.
+        """
+        e = self.image_manager.get_image(iid)
+        if not e or iid not in self.inventory_reset_buttons: return
+        
+        btn = self.inventory_reset_buttons[iid]
+        
+        # Optimization: If already dirty, skip comparison unless force_check is true
+        if not force_check and e.get("is_dirty"):
+            btn.place(relx=1.0, rely=0, anchor="ne", x=-32, y=5)
+            return
+
+        # Perform comparison and update dirty bit
+        modified = self.is_params_modified(e.get("params"))
+        e["is_dirty"] = modified
+        
+        if modified:
+            btn.place(relx=1.0, rely=0, anchor="ne", x=-32, y=5)
+        else:
+            # Explicitly hide tooltip if it exists before hiding the button
+            if hasattr(btn, "_tooltip_ref"):
+                btn._tooltip_ref.leave()
+            btn.place_forget()
 
     # --- Methods ---
     def load_presets(self):
@@ -458,6 +561,17 @@ class PixelApp(ctk.CTk):
 
     def apply_preset(self, preset_name):
         if preset_name in self.presets: self.restore_ui_state(self.presets[preset_name])
+
+    def pick_custom_accent(self):
+        from tkinter import colorchooser
+        current = self.theme_manager.get_current_accent()
+        color = colorchooser.askcolor(initialcolor=current, title="Pick Accent Color", parent=self)
+        if color[1]:
+            self.theme_manager.apply_custom_color("accent", color[1])
+            # Update OptionMenu values to include "Custom"
+            themes = self.theme_manager.get_available_themes()
+            self.option_theme.configure(values=themes)
+            self.option_theme.set("Custom")
 
     def change_theme(self, theme_name):
         self.theme_manager.set_theme(theme_name)
@@ -546,16 +660,40 @@ class PixelApp(ctk.CTk):
             self.btn_save.configure(state="normal")
         except Exception as e: print(f"Error project load: {e}")
 
+    def on_auto_optimal_toggle(self):
+        """Handles the Auto Optimal checkbox toggle."""
+        self.on_palette_menu_change(self.option_palette.get())
+
+    def update_auto_optimal_visibility(self):
+        # Deprecated: functionality moved to on_palette_menu_change
+        pass
+
     def on_palette_menu_change(self, value):
+        # 1. Base visibility for Auto Optimal
+        if value in ["Limited", "Grayscale"]:
+            self.check_auto_optimal.pack(after=self.option_palette, pady=5, fill="x")
+        else:
+            self.check_auto_optimal.pack_forget()
+
+        is_auto = self.check_auto_optimal.get() if hasattr(self, 'check_auto_optimal') else False
+
+        # 2. Logic for Fixed vs Adaptive Palettes
         if value in ["Original", "GameBoy", "CGA", "Pico-8", "USER CUSTOM", "16-bit (4096 Colors)"]:
             self.color_limit_group.pack_forget()
             self.label_extract_policy.pack_forget()
             self.extract_policy_switch.pack_forget()
             self.rap_frame.pack_forget()
         else:
-            self.color_limit_group.pack(after=self.option_palette, pady=5, fill="x")
+            # Show/Hide color limit based on Auto Optimal state
+            last_widget = self.check_auto_optimal
+            if is_auto and value in ["Limited", "Grayscale"]:
+                self.color_limit_group.pack_forget()
+            else:
+                self.color_limit_group.pack(after=self.check_auto_optimal, pady=5, fill="x")
+                last_widget = self.color_limit_group
+            
             if value == "Limited":
-                self.label_extract_policy.pack(after=self.color_limit_group, pady=(10, 0), fill="x")
+                self.label_extract_policy.pack(after=last_widget, pady=(10, 0), fill="x")
                 self.extract_policy_switch.pack(after=self.label_extract_policy, pady=5, fill="x")
                 if self._get_logical(self.extract_policy_switch.get(), "extract_policy") == "Aesthetic":
                     self.rap_frame.pack(after=self.extract_policy_switch, fill="x")
@@ -565,6 +703,7 @@ class PixelApp(ctk.CTk):
                 self.label_extract_policy.pack_forget()
                 self.extract_policy_switch.pack_forget()
                 self.rap_frame.pack_forget()
+        
         self.active_palette_mode = "Custom_User" if value == "USER CUSTOM" else ("Custom_16bit" if value == "16-bit (4096 Colors)" else "Standard")
         self.on_param_change()
 
@@ -660,9 +799,37 @@ class PixelApp(ctk.CTk):
             self.on_param_change()
 
     def on_setting_mode_change(self, value):
-        if value == self.locale.get("mode_individual") and self.current_inventory_id is not None:
-            e = self.image_manager.get_image(self.current_inventory_id)
-            if e and e["params"] is None: e["params"] = self.capture_ui_state()
+        mode = self._get_logical(value, "setting_mode")
+        if mode == "Global":
+            # Individual -> Global: Capture current UI state as the new global temporary state
+            self.global_params = self.capture_ui_state()
+            self.status_label.configure(text="🌐 Global Mode: Temporary state active")
+            
+            # Task 52.3: If current item is excluded, switch to first active or clear
+            if self.current_inventory_id is not None:
+                e = self.image_manager.get_image(self.current_inventory_id)
+                if e and not e.get("is_active_global", True):
+                    all_entries = self.image_manager.get_all()
+                    next_active = next((item for item in all_entries if item.get("is_active_global", True)), None)
+                    if next_active:
+                        self.select_inventory_image(next_active["id"])
+                    else:
+                        self.clear_preview()
+        else:
+            # Global -> Individual: Apply current global settings ONLY to active items
+            import copy
+            all_entries = self.image_manager.get_all()
+            for entry in all_entries:
+                if entry.get("is_active_global", True):
+                    entry["params"] = copy.deepcopy(self.global_params)
+                    # Update visibility for each modified item
+                    self.update_reset_button_visibility(entry["id"], force_check=True)
+            
+            self.status_label.configure(text="📁 Individual Mode: Settings applied to active group")
+            
+        self.update_inventory_appearance()
+        self.after(2000, lambda: self.status_label.configure(text=""))
+        self.on_param_change()
 
     def _get_logical(self, val, cat):
         m = {
@@ -711,19 +878,23 @@ class PixelApp(ctk.CTk):
             "bg_seeds": list(self.bg_seeds),
             "fg_seeds": list(self.fg_seeds),
             "dither": self.check_dither.get(), 
-            "remove_bg": False, # Deprecated in favor of bg_mode
             "outline": self.check_outline.get(), 
             "edge_enhance": self.check_edge_enhance.get(), 
             "edge_sensitivity": float(self.slider_edge_sens.get()), 
             "grain_enabled": self.check_grain.get(),
             "grain_intensity": int(self.slider_grain.get()),
+            "auto_optimal": self.check_auto_optimal.get(),
             "downsample_method": self._get_logical(self.option_downsample.get(), "downsample"), 
             "custom_colors": list(self.user_palette_colors_persistent)
         }
 
     def restore_ui_state(self, params):
         if not params: return
+        self._is_restoring = True
         try:
+            if "auto_optimal" in params:
+                (self.check_auto_optimal.select() if params["auto_optimal"] else self.check_auto_optimal.deselect())
+            
             if "save_mode" in params: self.mode_switch.set(self._get_display(params["save_mode"], "save_mode"))
             if "pixel_size" in params: 
                 self.slider_pixel.set(params["pixel_size"])
@@ -736,7 +907,7 @@ class PixelApp(ctk.CTk):
                 self.on_palette_menu_change(params["palette_mode"])
             if "extract_policy" in params: self.extract_policy_switch.set(self._get_display(params["extract_policy"], "extract_policy"))
             if "mapping_policy" in params: self.mapping_policy_switch.set(self._get_display(params["mapping_policy"], "mapping_policy"))
-            
+
             if "bg_mode" in params:
                 target_bg = params["bg_mode"]
                 if target_bg == "AI Auto" and not self.dml_supported:
@@ -748,52 +919,94 @@ class PixelApp(ctk.CTk):
 
             if "rap_w_sat" in params:
                 self.rap_weights["sat"][0].set(params["rap_w_sat"])
-                self.rap_weights["sat"][1].configure(text=f"{params['rap_w_sat']:.2f}")
+                self.rap_weights["sat"][1].configure(text=f"{params['rap_w_sat']:.2f}")   
             if "rap_w_con" in params:
                 self.rap_weights["con"][0].set(params["rap_w_con"])
-                self.rap_weights["con"][1].configure(text=f"{params['rap_w_con']:.2f}")
+                self.rap_weights["con"][1].configure(text=f"{params['rap_w_con']:.2f}")   
             if "rap_w_rar" in params:
                 self.rap_weights["rar"][0].set(params["rap_w_rar"])
-                self.rap_weights["rar"][1].configure(text=f"{params['rap_w_rar']:.2f}")
+                self.rap_weights["rar"][1].configure(text=f"{params['rap_w_rar']:.2f}")   
 
             if "dither" in params: (self.check_dither.select() if params["dither"] else self.check_dither.deselect())
             if "outline" in params: (self.check_outline.select() if params["outline"] else self.check_outline.deselect())
-            if "edge_enhance" in params: 
+            if "edge_enhance" in params:
                 (self.check_edge_enhance.select() if params["edge_enhance"] else self.check_edge_enhance.deselect())
                 self.update_edge_controls_state()
-            if "edge_sensitivity" in params: 
+            if "edge_sensitivity" in params:
                 self.slider_edge_sens.set(params["edge_sensitivity"])
-                self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")
+                self.label_edge_sens.configure(text=f"{params['edge_sensitivity']:.1f}")  
             if "grain_enabled" in params:
                 (self.check_grain.select() if params["grain_enabled"] else self.check_grain.deselect())
                 self.update_grain_controls_state()
             if "grain_intensity" in params:
                 self.slider_grain.set(params["grain_intensity"])
-                self.label_grain_val.configure(text=f"{int(params['grain_intensity'])}")
+                self.label_grain_val.configure(text=f"{int(params['grain_intensity'])}")  
             if "downsample_method" in params: self.option_downsample.set(self._get_display(params["downsample_method"], "downsample"))
-            if "custom_colors" in params: self.user_palette_colors_persistent = [tuple(c) for c in params["custom_colors"]]
+            
+            # Update custom colors (must update list in-place or replace fully)
+            if "custom_colors" in params:
+                new_colors = [tuple(c) for c in params["custom_colors"]]
+                self.user_palette_colors_persistent[:len(new_colors)] = new_colors
+            
+            self._is_restoring = False
             self.on_param_change()
-        except Exception as e: print(f"Error restore: {e}")
+        except Exception as e: 
+            self._is_restoring = False
+            print(f"Error restore: {e}")
 
     def on_param_change(self, *args):
+        if self._is_restoring: return
+        
+        mode = self._get_logical(self.setting_mode_switch.get(), "setting_mode")
+        
         if self.current_inventory_id is not None:
-            if self._get_logical(self.setting_mode_switch.get(), "setting_mode") == "Individual":
-                e = self.image_manager.get_image(self.current_inventory_id)
-                if e: e["params"] = self.capture_ui_state()
             e = self.image_manager.get_image(self.current_inventory_id)
-            if e: self.process_inventory_image(e["pil_image"])
+            if e:
+                if mode == "Individual":
+                    # Save UI state directly to the specific image
+                    e["params"] = self.capture_ui_state()
+                    # Refresh preview for current image
+                    self.process_inventory_image(e["pil_image"])
+                else:
+                    # Global mode: Update temporary global state
+                    self.global_params = self.capture_ui_state()
+                    
+                    # If this image is NOT in the active global group, 
+                    # we must NOT use the global UI values for its processing.
+                    # Instead, we use its own stored params if they exist.
+                    target_params = self.global_params if e.get("is_active_global", True) else (e["params"] if e["params"] else self.cached_defaults)
+                    self._start_threaded_process("pil", e["pil_image"], params_override=target_params)
+                
+                # Update button visibility for current image
+                self.update_reset_button_visibility(self.current_inventory_id)
         elif self.original_image_path: 
+            # Non-inventory single image mode
+            if mode == "Global":
+                self.global_params = self.capture_ui_state()
             self.process_image()
 
     def select_inventory_image(self, image_id):
-        self.current_inventory_id = image_id
+        mode = self._get_logical(self.setting_mode_switch.get(), "setting_mode")
         e = self.image_manager.get_image(image_id)
+        
+        # Task 52.1: Block selection if excluded in Global mode
+        if mode == "Global" and e and not e.get("is_active_global", True):
+            self.status_label.configure(text="⚠️ 활성 그룹에 포함되지 않은 이미지입니다.", text_color="#e74c3c")
+            self.after(2000, lambda: self.status_label.configure(text=""))
+            return
+
+        self.current_inventory_id = image_id
+        self.update_inventory_appearance()
         if e:
             if self._get_logical(self.setting_mode_switch.get(), "setting_mode") == "Individual":
-                if e["params"]: self.restore_ui_state(e["params"])
+                if e["params"]: 
+                    self.restore_ui_state(e["params"])
                 else: 
-                    e["params"] = self.capture_ui_state()
-                    self.process_inventory_image(e["pil_image"])
+                    # CRITICAL FIX: Use copy of defaults, NOT current UI state
+                    # which might belong to the previously selected image.
+                    import copy
+                    e["params"] = copy.deepcopy(self.cached_defaults)
+                    self.restore_ui_state(e["params"])
             else: 
                 self.process_inventory_image(e["pil_image"])
 
@@ -804,20 +1017,23 @@ class PixelApp(ctk.CTk):
         if self.original_image_path: 
             self._start_threaded_process("path", self.original_image_path)
 
-    def _start_threaded_process(self, source_type, source_data):
-        if self._is_processing: 
+    def _start_threaded_process(self, source_type, source_data, params_override=None):
+        if self._is_processing:
             self._pending_reprocess = True
-            self._pending_source = (source_type, source_data)
             return
-        self._is_processing = True
-        self.status_label.configure(text=self.locale.get("status_processing"))
-        self.btn_save.configure(state="disabled")
-        
-        # Capture current UI state and ID
-        params = self.capture_ui_state()
-        params["user_pal"] = self.user_palette_colors_persistent
-        params["palette_choice"] = params["palette_mode"]
-        item_id = self.current_inventory_id
+
+        # Priority: params_override > Individual Entry > Global State
+        if params_override:
+            params = params_override
+        elif self.current_inventory_id is not None:
+            e = self.image_manager.get_image(self.current_inventory_id)
+            mode = self._get_logical(self.setting_mode_switch.get(), "setting_mode")
+            if mode == "Individual" and e and e["params"]:
+                params = e["params"]
+            else:
+                params = self.capture_ui_state() # Use current UI for global/single
+        else:
+            params = self.capture_ui_state()
 
         def run():
             try:
@@ -837,7 +1053,7 @@ class PixelApp(ctk.CTk):
                     "fg_seeds": params.get("fg_seeds", [])
                 }
                 
-                entry = self.image_manager.get_image(item_id) if item_id is not None else None
+                entry = self.image_manager.get_image(self.current_inventory_id) if self.current_inventory_id is not None else None
                 
                 if entry and entry["bg_processed_image"] is not None and entry["last_bg_params"] == current_bg_params:
                     # Use Cache
@@ -871,13 +1087,19 @@ class PixelApp(ctk.CTk):
                     self.after(0, self._on_processing_complete, None)
                     return
                 
-                p_name, p_param = ("Custom_User", params["user_pal"]) if params["palette_choice"] == "USER CUSTOM" else (("Custom_16bit", None) if params["palette_choice"] == "16-bit (4096 Colors)" else (params["palette_choice"], params["color_count"]))
+                p_name = params["palette_mode"]
+                if p_name == "USER CUSTOM":
+                    p_name, p_param = "Custom_User", params["custom_colors"]
+                elif p_name == "16-bit (4096 Colors)":
+                    p_name, p_param = "Custom_16bit", None
+                else:
+                    p_param = params["color_count"]
+
                 proc = apply_palette_unified(raw, p_name, custom_colors=p_param, dither=params["dither"],
-                                             extract_policy=params.get("extract_policy", "Standard"),
-                                             mapping_policy=params.get("mapping_policy", "Classic"),
-                                             w_sat=params.get("rap_w_sat", 0.4),
-                                             w_con=params.get("rap_w_con", 0.3),
-                                             w_rar=params.get("rap_w_rar", 0.3))
+                                            extract_policy=params["extract_policy"],
+                                            mapping_policy=params["mapping_policy"],
+                                            w_sat=params["rap_w_sat"], w_con=params["rap_w_con"], w_rar=params["rap_w_rar"],
+                                            auto_optimal=params.get("auto_optimal", False))
                 proc = self.plugin_engine.execute_hook("POST_PALETTE", proc, params)
                 
                 # Apply Native Grain Effect (at the small pixel scale)
@@ -980,27 +1202,70 @@ class PixelApp(ctk.CTk):
             e = self.image_manager.get_image(self.current_inventory_id)
             if e: p = e["path"]
         if not p: return
+        
         is_gif = p.lower().endswith('.gif')
-        types = ([("GIF Animation", "*.gif")] if is_gif else []) + [("PNG", "*.png")]
-        f = filedialog.asksaveasfilename(parent=self, defaultextension=(".gif" if is_gif else ".png"), filetypes=types)
+        
+        # Expanded file types for professional pixel art workflow
+        types = [
+            ("PNG Image", "*.png"),
+            ("Targa Image (TGA)", "*.tga"),
+            ("BMP Windows Bitmap", "*.bmp"),
+            ("WebP Image", "*.webp"),
+            ("JPEG Image", "*.jpg"),
+            ("TIFF Image", "*.tiff")
+        ]
+        if is_gif:
+            types.insert(0, ("GIF Animation", "*.gif"))
+            
+        f = filedialog.asksaveasfilename(parent=self, 
+                                         defaultextension=(".gif" if is_gif else ".png"), 
+                                         filetypes=types)
         if f:
             f = os.path.normpath(f)
-            if is_gif and f.lower().endswith('.gif'):
+            ext = f.lower()
+            
+            if is_gif and ext.endswith('.gif'):
+                # GIF Animation Path
                 self.btn_save.configure(text="GIF...", state="disabled")
                 self.update()
                 ch = self.option_palette.get()
                 pn, pp = ("Custom_User", self.user_palette_colors_persistent) if ch == "USER CUSTOM" else (("Custom_16bit", None) if ch == "16-bit (4096 Colors)" else (ch, int(self.color_slider.get())))
-                process_gif(p, f, int(self.slider_pixel.get()), pn, pp, self.check_dither.get(), self.check_outline.get())
+                
+                params = self.capture_ui_state()
+                process_gif(p, f, int(self.slider_pixel.get()), pn, pp, 
+                            dither=params["dither"], 
+                            outline_enabled=params["outline"],
+                            extract_policy=params["extract_policy"],
+                            mapping_policy=params["mapping_policy"],
+                            w_sat=params["rap_w_sat"],
+                            w_con=params["rap_w_con"],
+                            w_rar=params["rap_w_rar"],
+                            auto_optimal=params["auto_optimal"])
                 self.btn_save.configure(text=self.locale.get("sidebar_export"), state="normal")
             else:
+                # Static Image Path
                 final = self.raw_pixel_image if self._get_logical(self.mode_switch.get(), "save_mode") == "Pixelate" else self.preview_image
-                if f.lower().endswith(('.jpg', '.bmp')): final = final.convert("RGB")
-                if f.lower().endswith('.png'):
+                
+                # Handle alpha channel for formats that don't support it well (JPG, BMP, TGA)
+                if ext.endswith(('.jpg', '.jpeg', '.bmp', '.tga')):
+                    if final.mode == "RGBA":
+                        # Create background (black by default for pixel art)
+                        bg = Image.new("RGB", final.size, (0, 0, 0))
+                        bg.paste(final, mask=final.split()[3])
+                        final = bg
+                    else:
+                        final = final.convert("RGB")
+                
+                if ext.endswith('.png'):
                     from PIL.PngImagePlugin import PngInfo
                     metadata = PngInfo()
                     metadata.add_text("Pixlato:Params", json.dumps(self.capture_ui_state()))
                     final.save(f, pnginfo=metadata)
-                else: final.save(f)
+                else:
+                    final.save(f)
+                
+                self.status_label.configure(text=f"✅ Saved: {os.path.basename(f)}")
+                self.after(3000, lambda: self.status_label.configure(text=""))
 
     def add_image_to_inventory(self):
         paths = filedialog.askopenfilenames(parent=self, filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.gif *.bmp")])
@@ -1013,15 +1278,87 @@ class PixelApp(ctk.CTk):
         if self.image_manager.count() > 0 and self.current_inventory_id is None: 
             self.select_inventory_image(self.image_manager.get_all()[0]["id"])
 
+    def toggle_global_inclusion(self, iid, var):
+        """Callback for the inventory inclusion checkbox."""
+        e = self.image_manager.get_image(iid)
+        if e:
+            is_active = var.get()
+            e["is_active_global"] = is_active
+            self.update_inventory_appearance()
+            
+            # Task 52.3: If current image is excluded in Global mode, switch preview
+            mode = self._get_logical(self.setting_mode_switch.get(), "setting_mode")
+            if mode == "Global" and self.current_inventory_id == iid and not is_active:
+                # Find another active image
+                all_entries = self.image_manager.get_all()
+                next_active = next((item for item in all_entries if item.get("is_active_global", True)), None)
+                if next_active:
+                    self.select_inventory_image(next_active["id"])
+                else:
+                    self.clear_preview()
+            elif self.current_inventory_id == iid:
+                self.on_param_change()
+
+    def update_inventory_appearance(self):
+        """Updates borders and checkbox visibility based on Setting Mode (Global/Individual)."""
+        mode = self._get_logical(self.setting_mode_switch.get(), "setting_mode")
+        
+        for iid, frame in self.inventory_widgets.items():
+            e = self.image_manager.get_image(iid)
+            if not e: continue
+            
+            cb = self.inventory_active_checkboxes.get(iid)
+            # Find labels to update their cursors too
+            children = frame.winfo_children()
+            labels = [c for c in children if isinstance(c, ctk.CTkLabel)]
+            
+            if mode == "Global":
+                # Show checkbox in Global mode
+                if cb: 
+                    cb.place(x=5, y=5)
+                    cb.lift()
+                
+                # Update border and background based on inclusion
+                is_active = e.get("is_active_global", True)
+                cursor = "hand2" if is_active else "arrow"
+                fg = "#2a2a2a" if is_active else "#1a1a1a"
+                
+                frame.configure(fg_color=fg, cursor=cursor)
+                for lbl in labels: lbl.configure(cursor=cursor)
+                
+                if is_active:
+                    frame.configure(border_width=2, border_color="#2ecc71")
+                else:
+                    frame.configure(border_width=0)
+            else:
+                # Hide checkbox in Individual mode
+                if cb: cb.place_forget()
+                # Default appearance for Individual mode
+                frame.configure(fg_color="#2a2a2a", cursor="hand2")
+                for lbl in labels: lbl.configure(cursor="hand2")
+                
+                if self.current_inventory_id == iid:
+                    frame.configure(border_width=2, border_color="#3498db")
+                else:
+                    frame.configure(border_width=0)
+
     def update_inventory_count_label(self):
         self.locale.register(self.label_inv_header, "inv_title", suffix=f" ({self.image_manager.count()}/256)")
 
     def _create_inventory_item(self, e):
         fid = e["id"]
-        item = ctk.CTkFrame(self.inventory_scroll, height=70, fg_color="#2a2a2a", corner_radius=8)
+        # Border width 2 for clear visual feedback
+        item = ctk.CTkFrame(self.inventory_scroll, height=70, fg_color="#2a2a2a", corner_radius=8, border_width=0)
         item.pack(fill="x", pady=3, padx=2)
         item.pack_propagate(False)
         self.inventory_widgets[fid] = item
+        
+        # Inclusion Checkbox (Task 51.2) - Small and top-left
+        var = ctk.BooleanVar(value=e.get("is_active_global", True))
+        cb = ctk.CTkCheckBox(item, text="", width=18, height=18, checkbox_width=18, checkbox_height=18,
+                             variable=var, command=lambda i=fid, v=var: self.toggle_global_inclusion(i, v))
+        self.inventory_active_checkboxes[fid] = cb
+        # Initially hidden, will be managed by update_inventory_appearance
         
         thumb = e["thumbnail"]
         ctk_t = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=(50, 50))
@@ -1029,9 +1366,19 @@ class PixelApp(ctk.CTk):
         tl.pack(side="left", padx=5, pady=5)
         tl.image = ctk_t
         
-        nl = ctk.CTkLabel(item, text=e["name"][:12], font=("Arial", 10), anchor="w")
+        nl = ctk.CTkLabel(item, text=e["name"], font=("Arial", 10), anchor="w", justify="left", wraplength=100)
         nl.pack(side="left", fill="x", expand=True, padx=5)
         
+        # Reset button: Restore default settings for this specific item
+        rb = ctk.CTkButton(item, text="↻", width=24, height=24, fg_color="#34495e", 
+                            hover_color="#2c3e50", command=lambda i=fid: self.reset_individual_params(i))
+        # Don't place it yet, visibility will be handled by update_reset_button_visibility
+        self.inventory_reset_buttons[fid] = rb
+        ToolTip(rb, "Reset settings to defaults")
+        
+        # Initial visibility check (especially important for images with metadata)
+        self.update_reset_button_visibility(fid, force_check=True)
+
         # Delete button: Robust click handling
         db = ctk.CTkButton(item, text="X", width=24, height=24, fg_color="#e74c3c", 
                             hover_color="#c0392b", command=lambda i=fid: self.remove_from_inventory(i))
@@ -1044,11 +1391,55 @@ class PixelApp(ctk.CTk):
         item.bind("<Button-1>", select_this)
         tl.bind("<Button-1>", select_this)
         nl.bind("<Button-1>", select_this)
+        
+        # Ensure checkbox is always on top (Task 51.5)
+        cb.lift()
+
+    def reset_individual_params(self, iid):
+        """Restores default parameters for a specific inventory item and forces Individual mode."""
+        print(f"DEBUG: Resetting ID: {iid}")
+        
+        mode = self._get_logical(self.setting_mode_switch.get(), "setting_mode")
+        import copy
+        defaults = self.get_hardcoded_defaults()
+
+        if mode == "Global":
+            # 1. Apply current global (temporary) settings to ALL images first
+            all_entries = self.image_manager.get_all()
+            for entry in all_entries:
+                entry["params"] = copy.deepcopy(self.global_params)
+            
+            # 2. THEN, override the target image with pure defaults
+            self.image_manager.update_image_params(iid, copy.deepcopy(defaults))
+            
+            # 3. Force switch to Individual mode UI
+            self.setting_mode_switch.set(self.locale.get("mode_individual"))
+        else:
+            # Already in Individual mode, just reset the target image
+            self.image_manager.update_image_params(iid, copy.deepcopy(defaults))
+
+        # 4. Show the changes in UI and preview
+        self.current_inventory_id = iid
+        self.restore_ui_state(defaults)
+        
+        # 5. Hide the reset button since it's now back to defaults
+        self.update_reset_button_visibility(iid, force_check=True)
+        
+        self.status_label.configure(text=f"↺ Reset ID {iid} (Switched to Individual)")
+        self.after(2000, lambda: self.status_label.configure(text=""))
 
     def remove_from_inventory(self, iid):
         if iid in self.inventory_widgets:
             self.inventory_widgets[iid].destroy()
             del self.inventory_widgets[iid]
+        
+        # Clean up reset button reference
+        if iid in self.inventory_reset_buttons:
+            del self.inventory_reset_buttons[iid]
+            
+        # Clean up active checkbox reference
+        if iid in self.inventory_active_checkboxes:
+            del self.inventory_active_checkboxes[iid]
         
         self.image_manager.remove_image(iid)
         self.update_inventory_count_label()
@@ -1087,7 +1478,7 @@ class PixelApp(ctk.CTk):
     def batch_export(self):
         if self.image_manager.count() > 0: BatchExportWindow(self, self._start_batch_export_process)
 
-    def _start_batch_export_process(self, od, fs, win, ss=False, sep=False):
+    def _start_batch_export_process(self, od, fs, win, ss=False, sep=False, norm_settings=None):
         import concurrent.futures
         from collections import defaultdict
         import math
@@ -1098,7 +1489,7 @@ class PixelApp(ctk.CTk):
         def process_frame_layered(e, target_params):
             p = target_params
             
-            # Use Background Removal Cache if available and params match
+            # 1. Background Removal
             current_bg_params = {
                 "bg_mode": p.get("bg_mode", "None"),
                 "bg_seeds": p.get("bg_seeds", []),
@@ -1119,27 +1510,65 @@ class PixelApp(ctk.CTk):
                 elif bg_m == "Classic":
                     img = remove_background(img, tolerance=40)
                 
-                # Update cache for future use
                 e["bg_processed_image"] = img
                 e["last_bg_params"] = current_bg_params.copy()
                 
-            if p.get("edge_enhance"): from core.processor import enhance_internal_edges; img = enhance_internal_edges(img, p["edge_sensitivity"])
+            # 2. Edge & Pixelation
+            if p.get("edge_enhance"): 
+                from core.processor import enhance_internal_edges
+                img = enhance_internal_edges(img, p["edge_sensitivity"])
+                
             sw, sh = max(1, img.size[0] // p["pixel_size"]), max(1, img.size[1] // p["pixel_size"])
             small = img.resize((sw, sh), resample=Image.BOX)
-            pn, pp = ("Custom_User", p["custom_colors"]) if p["palette_mode"] == "USER CUSTOM" else (("Custom_16bit", None) if p["palette_mode"] == "16-bit (4096 Colors)" else (p["palette_mode"], p.get("color_count", 16)))
-            proc = apply_palette_unified(small, pn, pp, p.get("dither", True), extract_policy=p.get("extract_policy", "Standard"), mapping_policy=p.get("mapping_policy", "Classic"),
-                                         w_sat=p.get("rap_w_sat", 0.4), w_con=p.get("rap_w_con", 0.3), w_rar=p.get("rap_w_rar", 0.3))
+            
+            # 3. Palette Application
+            ch = p["palette_mode"]
+            pn, pp = ("Custom_User", p["custom_colors"]) if ch == "USER CUSTOM" else (("Custom_16bit", None) if ch == "16-bit (4096 Colors)" else (ch, p.get("color_count", 16)))
+            
+            proc = apply_palette_unified(small, pn, pp, p.get("dither", True), 
+                                         extract_policy=p.get("extract_policy", "Standard"), 
+                                         mapping_policy=p.get("mapping_policy", "Classic"),
+                                         w_sat=p.get("rap_w_sat", 0.4), w_con=p.get("rap_w_con", 0.3), w_rar=p.get("rap_w_rar", 0.3),
+                                         auto_optimal=p.get("auto_optimal", False))
             
             if p.get("grain_enabled"): proc = apply_grain_effect(proc, p.get("grain_intensity", 15))
             
-            base = proc.resize(e["pil_image"].size, Image.NEAREST)
+            # 4. Upscale back to Original Result Size
+            orig_size = e["pil_image"].size
+            base = proc.resize(orig_size, Image.NEAREST)
+            
+            # 5. [New Phase 50] Resolution Normalization
+            if norm_settings and norm_settings.get("enabled"):
+                target_res = (norm_settings["target_w"], norm_settings["target_h"])
+                # Decide strategy based on relative size
+                if target_res[0] > base.size[0] or target_res[1] > base.size[1]:
+                    strat = norm_settings["upscale_strategy"]
+                else:
+                    strat = norm_settings["downscale_strategy"]
+                
+                base = normalize_image_geometry(base, target_res, strategy=strat)
+
+            # 6. Outline & Layering
             outline_img = None
             if p.get("outline"):
                 from PIL import ImageChops
-                out_small = add_outline(proc); diff = ImageChops.difference(out_small, proc)
-                outline_img = diff.resize(e["pil_image"].size, Image.NEAREST)
-                final = out_small.resize(e["pil_image"].size, Image.NEAREST)
-            else: final = base
+                # Re-calculate outline on the potentially normalized base
+                out_small = add_outline(proc)
+                # Ensure outline is upscaled to match normalized base
+                base_for_diff = proc.resize(orig_size, Image.NEAREST)
+                diff = ImageChops.difference(out_small, proc)
+                outline_img = diff.resize(orig_size, Image.NEAREST)
+                
+                final = out_small.resize(orig_size, Image.NEAREST)
+                
+                # Apply same normalization to final and outline if enabled
+                if norm_settings and norm_settings.get("enabled"):
+                    target_res = (norm_settings["target_w"], norm_settings["target_h"])
+                    final = normalize_image_geometry(final, target_res, strategy=strat)
+                    outline_img = normalize_image_geometry(outline_img, target_res, strategy=strat)
+            else: 
+                final = base
+                
             return final, base, outline_img
 
         def task_individual(e, f):
@@ -1147,28 +1576,40 @@ class PixelApp(ctk.CTk):
                 p = e["params"] if mode == "Individual" and e["params"] else g
                 final, base, outline = process_frame_layered(e, p)
                 bn = os.path.basename(e['name'])
+                ext = f.lower()
                 if sep and outline:
                     base.save(os.path.join(od, f"{bn}_base.png")); outline.save(os.path.join(od, f"{bn}_outline.png"))
                     return True, f"✅ Layers: {bn}"
                 else:
-                    if f.lower() in ["jpg", "bmp"]: final = final.convert("RGB")
-                    final.save(os.path.join(od, f"{bn}_pixel.{f.lower()}"))
+                    # Handle alpha channel for specific formats
+                    if ext in ["jpg", "jpeg", "bmp", "tga"]:
+                        if final.mode == "RGBA":
+                            bg = Image.new("RGB", final.size, (0, 0, 0))
+                            bg.paste(final, mask=final.split()[3])
+                            final = bg
+                        else:
+                            final = final.convert("RGB")
+                    
+                    save_path = os.path.join(od, f"{bn}_pixel.{ext}")
+                    final.save(save_path)
                     return True, f"✅ {bn} ({f})"
             except Exception as ex: return False, f"❌ {e['name']}: {ex}"
 
-        def task_gif_group(path, frames):
+        def task_gif_group(path, frames, custom_duration=None):
             try:
                 processed_frames = []
                 for e in frames:
                     p = e["params"] if mode == "Individual" and e["params"] else g
-                    final, _, _ = process_frame_layered(e, p); processed_frames.append(final.convert("P", palette=Image.ADAPTIVE))
-                base_name = os.path.splitext(os.path.basename(path))[0]; save_path = os.path.join(od, f"{base_name}_pixel.gif")
-                dur = 100
-                try:
-                    with Image.open(path) as orig: dur = orig.info.get('duration', 100)
-                except: pass
-                if processed_frames: processed_frames[0].save(save_path, save_all=True, append_images=processed_frames[1:], duration=dur, loop=0, optimize=False)
-                return True, f"✅ GIF: {base_name}"
+                    final, _, _ = process_frame_layered(e, p)
+                    processed_frames.append(final.convert("P", palette=Image.ADAPTIVE))
+                
+                # Single merged GIF name
+                save_path = os.path.join(od, "pixlato_merged_sequence.gif")
+                dur = custom_duration if custom_duration else 100
+                if processed_frames: 
+                    processed_frames[0].save(save_path, save_all=True, append_images=processed_frames[1:], 
+                                            duration=dur, loop=0, optimize=False)
+                return True, f"✅ GIF Merged: {len(processed_frames)} frames"
             except Exception as ex: return False, f"❌ GIF: {ex}"
 
         def task_spritesheet(path, frames):
@@ -1181,33 +1622,43 @@ class PixelApp(ctk.CTk):
                 n = len(processed); cols = math.ceil(math.sqrt(n)); rows = math.ceil(n / cols); fw, fh = processed[0].size
                 sheet = Image.new("RGBA", (cols * fw, rows * fh), (0,0,0,0))
                 for i, img in enumerate(processed): r, c = divmod(i, cols); sheet.paste(img, (c * fw, r * fh))
-                base_name = os.path.splitext(os.path.basename(path))[0]; sheet.save(os.path.join(od, f"{base_name}_spritesheet.png"))
+                base_name = "pixlato_spritesheet"; sheet.save(os.path.join(od, f"{base_name}.png"))
                 return True, f"✅ Sheet: {base_name}"
             except Exception as ex: return False, f"❌ Sheet: {ex}"
 
         def run():
             done = 0; tasks = []
+            gif_dur = norm_settings.get("duration", 100) if norm_settings else 100
             if ss:
-                for path, frames in groups.items():
-                    if len(frames) > 1: tasks.append(("spritesheet", path, frames))
+                tasks.append(("spritesheet", "merged", entries))
             for f in fs:
                 if f == "GIF":
-                    for path, frames in groups.items(): tasks.append(("gif", path, frames))
+                    tasks.append(("gif", "merged", entries, gif_dur))
                 else:
                     for e in entries: tasks.append(("individual", e, f))
             if sep and not tasks:
                 for e in entries: tasks.append(("individual", e, "PNG"))
             total = len(tasks)
-            if total == 0: self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료")); return
+            if total == 0: 
+                if win.winfo_exists(): self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
+                return
+            
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
                 fut = []
                 for t in tasks:
-                    if t[0] == "gif": fut.append(ex.submit(task_gif_group, t[1], t[2]))
+                    if t[0] == "gif": fut.append(ex.submit(task_gif_group, t[1], t[2], t[3]))
                     elif t[0] == "spritesheet": fut.append(ex.submit(task_spritesheet, t[1], t[2]))
                     else: fut.append(ex.submit(task_individual, t[1], t[2]))
+                
                 for f in concurrent.futures.as_completed(fut):
-                    done += 1; s, m = f.result(); self.after(0, lambda m=m: win.log(m)); self.after(0, lambda d=done, tl=total: win.update_progress(d, tl))
-            self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
+                    done += 1
+                    s, m = f.result()
+                    if win.winfo_exists():
+                        self.after(0, lambda m=m: win.log(m))
+                        self.after(0, lambda d=done, tl=total: win.update_progress(d, tl))
+            
+            if win.winfo_exists():
+                self.after(0, lambda: win.btn_start.configure(state="normal", text="작업 완료"))
         threading.Thread(target=run, daemon=True).start()
 
     def save_preset_dialog(self):

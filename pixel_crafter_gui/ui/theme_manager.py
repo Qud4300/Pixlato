@@ -106,6 +106,16 @@ class ThemeManager:
         new_rgb = [max(0, min(255, int(c * (1 + factor)))) for c in rgb]
         return '#{:02x}{:02x}{:02x}'.format(*new_rgb)
 
+    def apply_custom_color(self, role, color):
+        """Updates the 'Custom' theme configuration and switches to it."""
+        if "Custom" not in self.theme_configs:
+            # Initialize with default dark if not exists
+            self.theme_configs["Custom"] = self.theme_configs["Default Dark"].copy()
+        
+        self.theme_configs["Custom"][role] = color
+        self.current_theme_name = "Custom"
+        self.refresh_widgets()
+
     def get_available_themes(self):
         return list(self.theme_configs.keys())
 

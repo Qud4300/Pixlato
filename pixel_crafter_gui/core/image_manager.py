@@ -59,6 +59,8 @@ class ImageManager:
                         "pil_image": frame_copy,
                         "thumbnail": self._create_thumbnail(frame_copy),
                         "params": embedded_params, # Assign embedded parameters
+                        "is_dirty": False,
+                        "is_active_global": True, # For Phase 51
                         "bg_processed_image": None,
                         "last_bg_params": None
                     }
@@ -75,6 +77,8 @@ class ImageManager:
                     "pil_image": img_rgba,
                     "thumbnail": self._create_thumbnail(img_rgba),
                     "params": embedded_params, # Assign embedded parameters
+                    "is_dirty": False,
+                    "is_active_global": True,
                     "bg_processed_image": None,
                     "last_bg_params": None
                 }
@@ -104,6 +108,14 @@ class ImageManager:
         """Returns all image entries."""
         return self.images
     
+    def update_image_params(self, image_id, params):
+        """Updates parameters for a specific image ID."""
+        for img in self.images:
+            if img["id"] == image_id:
+                img["params"] = params
+                return True
+        return False
+
     def clear(self):
         """Clears all images."""
         self.images = []

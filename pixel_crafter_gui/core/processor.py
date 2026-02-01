@@ -199,6 +199,55 @@ def downsample_kmeans_adaptive(img, pixel_size, out_w, out_h):
     result_arr = result_tensor.reshape(out_h, out_w, 4).byte().cpu().numpy()
     return Image.fromarray(result_arr, "RGBA")
 
+def normalize_image_geometry(img, target_size, strategy="Fit & Pad", bg_color=(0, 0, 0, 0)):
+    """
+    Standardizes image dimensions based on a target size and geometric strategy.
+    
+    Strategies:
+    - "Stretch" / "Compress": Simple Nearest Neighbor resize.
+    - "Pad" / "Fit & Pad": Maintain ratio, fit inside target, center and pad.
+    - "Center Crop": Center the image and crop/pad around it.
+    """
+    if img.size == target_size:
+        return img
+        
+    tw, th = target_size
+    iw, ih = img.size
+    
+    if strategy in ["Stretch", "Compress"]:
+        return img.resize((tw, th), Image.NEAREST)
+        
+    elif strategy in ["Pad", "Fit & Pad"]:
+        # Calculate scaling ratio to fit inside
+        ratio = min(tw / iw, th / ih)
+        nw, nh = max(1, int(iw * ratio)), max(1, int(ih * ratio))
+        
+        # Resize scaled image
+        res_scaled = img.resize((nw, nh), Image.NEAREST)
+        
+        # Create canvas and paste
+        canvas = Image.new("RGBA", (tw, th), bg_color)
+        ox, oy = (tw - nw) // 2, (th - nh) // 2
+        
+        # Use split()[3] if RGBA for proper transparency mask
+        mask = res_scaled.split()[3] if res_scaled.mode == "RGBA" else None
+        canvas.paste(res_scaled, (ox, oy), mask=mask)
+        return canvas
+        
+    elif strategy == "Center Crop":
+        canvas = Image.new("RGBA", (tw, th), bg_color)
+        # Calculate paste offset
+        ox, oy = (tw - iw) // 2, (th - ih) // 2
+        
+        # If image is larger, we need to crop it
+        # If image is smaller, we just paste it in center (padding)
+        # Paste handles both (if ox/oy are negative, it crops)
+        mask = img.split()[3] if img.mode == "RGBA" else None
+        canvas.paste(img, (ox, oy), mask=mask)
+        return canvas
+        
+    return img
+
 def is_directml_supported():
     """
     Checks if DirectML (universal Windows GPU acceleration) is supported.
@@ -237,7 +286,22 @@ def remove_background_ai(img):
             # Use u2net (standard)
             REMBG_SESSION = new_session(model_name="u2net", providers=target_providers)
             
-        return remove(img, session=REMBG_SESSION)
+        result = remove(img, session=REMBG_SESSION)
+        
+        # Post-process: Alpha Thresholding/Binarization
+        # Pixel Art requires clean edges. Semi-transparent residue causes dirty outlines.
+        if result.mode == "RGBA":
+            r, g, b, a = result.split()
+            # Threshold: Values < 128 become 0, >= 128 become 255
+            a = a.point(lambda p: 255 if p >= 128 else 0)
+            
+            # Optional: Matte Cleanup (Remove small isolated noise pixels)
+            from PIL import ImageFilter
+            a = a.filter(ImageFilter.MedianFilter(size=3))
+            
+            result = Image.merge("RGBA", (r, g, b, a))
+            
+        return result
     except Exception as e:
         print(f"AI Background Removal Error: {e}")
         return img

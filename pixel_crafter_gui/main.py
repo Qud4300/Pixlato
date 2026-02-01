@@ -1,10 +1,11 @@
-import customtkinter as ctk
-from ui.app import PixelApp
-import sys
 import os
+import sys
 
 # Ensure the root directory is in sys.path for imports to work correctly
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+import customtkinter as ctk
+from ui.app import PixelApp
 
 def main():
     # Set global appearance

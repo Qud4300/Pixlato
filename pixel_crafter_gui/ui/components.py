@@ -1,5 +1,8 @@
 import customtkinter as ctk
 from tkinter import filedialog
+import json
+import colorsys
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 from core.palette_parser import PaletteParser
 
 class IntSpinbox(ctk.CTkFrame):
@@ -60,9 +63,9 @@ class IntSpinbox(ctk.CTkFrame):
         self.entry.delete(0, "end")
         self.entry.insert(0, str(value))
 
-class ToolTip(ctk.CTkToplevel):
+class ToolTip:
     """
-    A simple ToolTip widget for CustomTkinter.
+    A simple ToolTip widget for CustomTkinter with lifecycle protection.
     """
     def __init__(self, widget, text, delay=300):
         self.widget = widget
@@ -70,9 +73,14 @@ class ToolTip(ctk.CTkToplevel):
         self.delay = delay
         self.tip_window = None
         self.id = None
-        self.widget.bind("<Enter>", self.enter)
-        self.widget.bind("<Leave>", self.leave)
-        self.widget.bind("<ButtonPress>", self.leave)
+        self.widget.bind("<Enter>", self.enter, add="+")
+        self.widget.bind("<Leave>", self.leave, add="+")
+        self.widget.bind("<ButtonPress>", self.leave, add="+")
+        self.widget.bind("<Unmap>", self.leave, add="+") # Handle when widget is hidden
+        self.widget.bind("<Destroy>", self.leave, add="+") # Handle when widget is deleted
+        
+        # Attach reference to the widget for manual control
+        self.widget._tooltip_ref = self
 
     def enter(self, event=None):
         self.schedule()
@@ -86,36 +94,43 @@ class ToolTip(ctk.CTkToplevel):
         self.id = self.widget.after(self.delay, self.showtip)
 
     def unschedule(self):
-        id = self.id
+        id_val = self.id
         self.id = None
-        if id:
-            self.widget.after_cancel(id)
+        if id_val:
+            self.widget.after_cancel(id_val)
 
     def showtip(self, event=None):
-        x = y = 0
-        x, y, cx, cy = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 25
+        if not self.widget.winfo_exists() or not self.widget.winfo_viewable():
+            return
+            
+        x = self.widget.winfo_rootx() + 25
+        y = self.widget.winfo_rooty() + 25
         
         # Creates a toplevel window
-        self.tip_window = ctk.CTkToplevel(self.widget)
-        self.tip_window.wm_overrideredirect(True)
-        self.tip_window.wm_geometry("+%d+%d" % (x, y))
-        
-        label = ctk.CTkLabel(self.tip_window, text=self.text, justify='left',
-                             fg_color="#333333", text_color="#ffffff",
-                             corner_radius=6, font=("Arial", 12))
-        label.pack(ipadx=10, ipady=5)
-        
-        # Ensure it's on top but doesn't take focus
-        self.tip_window.attributes("-topmost", True)
-        self.tip_window.attributes("-alpha", 0.9)
+        try:
+            self.tip_window = ctk.CTkToplevel(self.widget)
+            self.tip_window.wm_overrideredirect(True)
+            self.tip_window.wm_geometry("+%d+%d" % (x, y))
+            
+            label = ctk.CTkLabel(self.tip_window, text=self.text, justify='left',
+                                 fg_color="#333333", text_color="#ffffff",
+                                 corner_radius=6, font=("Arial", 12))
+            label.pack(ipadx=10, ipady=5)
+            
+            # Ensure it's on top but doesn't take focus
+            self.tip_window.attributes("-topmost", True)
+            self.tip_window.attributes("-alpha", 0.9)
+        except Exception:
+            self.tip_window = None
 
     def hidetip(self):
         tw = self.tip_window
         self.tip_window = None
         if tw:
-            tw.destroy()
+            try:
+                tw.destroy()
+            except Exception:
+                pass
 
 class PaletteInspector(ctk.CTkFrame):
     """
@@ -178,8 +193,47 @@ class PaletteInspector(ctk.CTkFrame):
             # Optional: Add tooltip-like behavior on click or hover? 
             # For now just visual.
 
-from PIL import Image, ImageDraw, ImageTk
-import colorsys
+def bind_ctk_slider_wheel(slider, precision=0.05):
+    """
+    Binds mouse wheel events to a CTkSlider for fine-tuning.
+    Prevents event propagation to parent scrollable widgets.
+    """
+    def on_wheel(event):
+        # Calculate step based on slider range and steps
+        # If slider has number_of_steps, use that for integer steps
+        # Otherwise use precision for continuous sliders
+        from_val = slider.cget("from_")
+        to_val = slider.cget("to")
+        steps = slider.cget("number_of_steps")
+        
+        current_val = slider.get()
+        
+        # Determine direction
+        delta = 1 if event.delta > 0 else -1
+        # Windows/macOS/Linux handle delta differently, but sign is usually consistent
+        
+        if steps:
+            # Discrete slider
+            step_size = (to_val - from_val) / steps
+            new_val = current_val + (delta * step_size)
+        else:
+            # Continuous slider
+            range_val = abs(to_val - from_val)
+            new_val = current_val + (delta * range_val * precision)
+            
+        # Clamp value
+        new_val = max(min(from_val, to_val) if from_val < to_val else to_val, 
+                      min(max(from_val, to_val), new_val))
+        
+        slider.set(new_val)
+        # Trigger command if it exists
+        command = slider.cget("command")
+        if command:
+            command(new_val)
+            
+        return "break" # Prevent scrolling of parent frame
+
+    slider.bind("<MouseWheel>", on_wheel)
 
 class CustomPaletteWindow(ctk.CTkToplevel):
     def __init__(self, parent, current_callback, initial_colors=None, initial_index=0, live_callback=None):
@@ -279,6 +333,7 @@ class CustomPaletteWindow(ctk.CTkToplevel):
         self.hue_slider = ctk.CTkSlider(self.picker_frame, from_=0, to=1, command=self.on_hue_change, height=15)
         self.hue_slider.set(0)
         self.hue_slider.pack(fill="x", padx=40, pady=(0, 5))
+        bind_ctk_slider_wheel(self.hue_slider)
 
         self.hue_info_frame = ctk.CTkFrame(self.picker_frame, fg_color="transparent")
         self.hue_info_frame.pack(fill="x", padx=40)
@@ -641,7 +696,7 @@ class BatchExportWindow(ctk.CTkToplevel):
     def __init__(self, parent, start_callback):
         super().__init__(parent)
         self.title("일괄 저장 설정 (Batch Export Settings)")
-        self.geometry("450x550")
+        self.geometry("450x650")
         self.resizable(False, False)
         self.parent = parent
         self.start_callback = start_callback
@@ -649,26 +704,67 @@ class BatchExportWindow(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
 
-        # Layout
+        # Action Buttons - Pack first at the bottom to ensure visibility
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(side="bottom", pady=20, fill="x")
+        
+        self.btn_start = ctk.CTkButton(btn_frame, text="🚀 작업 시작", command=self.on_start, 
+                                        fg_color="#2ecc71", hover_color="#27ae60", height=40, font=("Arial", 14, "bold"))
+        self.btn_start.pack(side="left", padx=(20, 5), expand=True)
+        
+        self.btn_open_folder = ctk.CTkButton(btn_frame, text="", command=self.open_output_folder, 
+                                            fg_color="#34495e", hover_color="#2c3e50", height=40)
+        self.btn_open_folder.pack(side="left", padx=5, expand=True)
+        self.parent.locale.register(self.btn_open_folder, "batch_open_folder")
+
+        self.btn_close = ctk.CTkButton(btn_frame, text="닫기", command=self.destroy, width=100)
+        self.btn_close.pack(side="right", padx=(5, 20))
+
+        # Layout (Rest of elements pack from top)
         ctk.CTkLabel(self, text="📦 일괄 저장 (Batch Export)", font=("Arial", 20, "bold")).pack(pady=20)
 
         # Formats Section
         format_frame = ctk.CTkFrame(self)
         format_frame.pack(pady=10, padx=20, fill="x")
         self.label_fmt = ctk.CTkLabel(format_frame, text="내보낼 포맷 선택:", font=("Arial", 12, "bold"))
-        self.label_fmt.pack(pady=10, padx=10, anchor="w")
+        self.label_fmt.grid(row=0, column=0, columnspan=3, pady=10, padx=10, sticky="w")
         self.parent.locale.register(self.label_fmt, "batch_formats")
         
         self.format_vars = {
             "PNG": ctk.BooleanVar(value=True),
+            "TGA": ctk.BooleanVar(value=False),
             "JPG": ctk.BooleanVar(value=False),
             "BMP": ctk.BooleanVar(value=False),
             "WEBP": ctk.BooleanVar(value=False),
             "GIF": ctk.BooleanVar(value=False)
         }
+        self.format_checkboxes = {}
+
+        # Grid layout for checkboxes to ensure visibility (3 columns)
+        for i, (fmt, var) in enumerate(self.format_vars.items()):
+            row, col = divmod(i, 3)
+            cb = ctk.CTkCheckBox(format_frame, text=fmt, variable=var, command=lambda f=fmt: self.on_format_toggle(f))
+            cb.grid(row=row+1, column=col, padx=20, pady=10, sticky="w")
+            self.format_checkboxes[fmt] = cb
+
+        # Resolution Normalization Section (Task 50.1)
+        norm_frame = ctk.CTkFrame(self)
+        norm_frame.pack(pady=5, padx=20, fill="x")
         
-        for fmt, var in self.format_vars.items():
-            ctk.CTkCheckBox(format_frame, text=fmt, variable=var).pack(side="left", padx=10, pady=10)
+        self.btn_res_settings = ctk.CTkButton(norm_frame, text="📏 이미지 크기 설정 (Resolution Settings)", 
+                                             command=self.open_resolution_settings, fg_color="#8e44ad", hover_color="#9b59b6")
+        self.btn_res_settings.pack(pady=10, padx=10, fill="x")
+        self.parent.locale.register(self.btn_res_settings, "batch_res_settings")
+        
+        # Default normalization settings
+        self.norm_settings = {
+            "enabled": False,
+            "target_w": 0,
+            "target_h": 0,
+            "upscale_strategy": "Pad",
+            "downscale_strategy": "Fit & Pad",
+            "bg_color": (0, 0, 0, 0) # Transparent default
+        }
 
         # Output Directory Section
         dir_frame = ctk.CTkFrame(self)
@@ -706,18 +802,35 @@ class BatchExportWindow(ctk.CTkToplevel):
 
         # Log Area
         self.log_text = ctk.CTkTextbox(self, height=120, font=("Consolas", 10))
-        self.log_text.pack(pady=10, padx=20, fill="x")
+        self.log_text.pack(pady=10, padx=20, fill="both", expand=True)
 
-        # Action Buttons
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(side="bottom", pady=20, fill="x")
+    def on_format_toggle(self, changed_fmt):
+        """Enforces exclusivity: if GIF is selected, others are disabled. vice versa."""
+        is_gif = self.format_vars["GIF"].get()
         
-        self.btn_start = ctk.CTkButton(btn_frame, text="🚀 작업 시작", command=self.on_start, 
-                                        fg_color="#2ecc71", hover_color="#27ae60", height=40, font=("Arial", 14, "bold"))
-        self.btn_start.pack(side="left", padx=20, expand=True)
-        
-        self.btn_close = ctk.CTkButton(btn_frame, text="닫기", command=self.destroy, width=100)
-        self.btn_close.pack(side="right", padx=20)
+        if changed_fmt == "GIF" and is_gif:
+            # GIF selected: deselect and disable others
+            for fmt in self.format_vars:
+                if fmt != "GIF":
+                    self.format_vars[fmt].set(False)
+                    self.format_checkboxes[fmt].configure(state="disabled")
+        elif changed_fmt == "GIF" and not is_gif:
+            # GIF deselected: enable others
+            for fmt in self.format_vars:
+                if fmt != "GIF":
+                    self.format_checkboxes[fmt].configure(state="normal")
+        else:
+            # One of the other formats was toggled
+            any_others = any(self.format_vars[f].get() for f in self.format_vars if f != "GIF")
+            if any_others:
+                self.format_vars["GIF"].set(False)
+                self.format_checkboxes["GIF"].configure(state="disabled")
+            else:
+                self.format_checkboxes["GIF"].configure(state="normal")
+
+    def open_resolution_settings(self):
+        """Opens the new ResolutionSettingsWindow."""
+        ResolutionSettingsWindow(self, self.norm_settings)
 
     def browse_dir(self):
         self.grab_release()
@@ -726,6 +839,18 @@ class BatchExportWindow(ctk.CTkToplevel):
         if d:
             self.entry_dir.delete(0, "end")
             self.entry_dir.insert(0, d)
+
+    def open_output_folder(self):
+        """Opens the selected output directory in the OS file explorer."""
+        import os
+        path = self.entry_dir.get()
+        if path and os.path.exists(path) and os.path.isdir(path):
+            try:
+                os.startfile(path)
+            except Exception as e:
+                self.log(f"❌ 폴더 열기 실패: {e}")
+        else:
+            self.log("⚠️ 유효한 저장 경로가 아닙니다.")
 
     def on_start(self):
         output_dir = self.entry_dir.get()
@@ -739,18 +864,204 @@ class BatchExportWindow(ctk.CTkToplevel):
             return
 
         self.btn_start.configure(state="disabled")
-        self.start_callback(output_dir, selected_formats, self, self.var_spritesheet.get(), self.var_separate.get())
+        self.start_callback(output_dir, selected_formats, self, 
+                            ss=self.var_spritesheet.get(), 
+                            sep=self.var_separate.get(),
+                            norm_settings=self.norm_settings)
 
     def log(self, message):
-        self.log_text.insert("end", message + "\n")
-        self.log_text.see("end")
-        self.update_idletasks()
+        if not self.winfo_exists(): return
+        try:
+            self.log_text.insert("end", message + "\n")
+            self.log_text.see("end")
+            self.update_idletasks()
+        except Exception:
+            pass
 
     def update_progress(self, current, total):
-        val = current / total
-        self.progress_bar.set(val)
-        self.progress_label.configure(text=f"진행 중: {current} / {total}")
-        self.update_idletasks()
+        if not self.winfo_exists(): return
+        try:
+            val = current / total
+            self.progress_bar.set(val)
+            self.progress_label.configure(text=f"진행 중: {current} / {total}")
+            self.update_idletasks()
+        except Exception:
+            pass
+
+class ResolutionSettingsWindow(ctk.CTkToplevel):
+    """
+    Popup to configure global resolution normalization for batch exports.
+    """
+    def __init__(self, parent, settings_ref):
+        super().__init__(parent)
+        self.title("이미지 규격화 설정 (Normalization Settings)")
+        self.geometry("400x650")
+        self.resizable(False, False)
+        self.parent = parent # BatchExportWindow
+        self.settings = settings_ref # Dictionary reference to update
+        self.locale = parent.parent.locale
+        
+        self.transient(parent)
+        self.grab_set()
+        
+        # 1. Analyze Inventory Stats
+        app = parent.parent # PixelApp
+        all_images = app.image_manager.get_all()
+        
+        ws = [img["pil_image"].size[0] for img in all_images]
+        hs = [img["pil_image"].size[1] for img in all_images]
+        
+        min_w, max_w = min(ws) if ws else 0, max(ws) if ws else 0
+        min_h, max_h = min(hs) if hs else 0, max(hs) if hs else 0
+        
+        # UI Header
+        self.label_title = ctk.CTkLabel(self, text="", font=("Arial", 18, "bold"))
+        self.label_title.pack(pady=15)
+        self.locale.register(self.label_title, "norm_title")
+
+        # MASTER SWITCH: Enable Toggle (Task 50.1 Refinement)
+        self.var_enabled = ctk.BooleanVar(value=self.settings["enabled"])
+        self.check_enabled = ctk.CTkCheckBox(self, text="", variable=self.var_enabled, command=self.toggle_widgets)
+        self.check_enabled.pack(pady=(0, 10))
+        self.locale.register(self.check_enabled, "norm_enable")
+        
+        # Divider
+        ctk.CTkFrame(self, height=2, fg_color="#444").pack(fill="x", padx=20, pady=10)
+
+        # Stats Info
+        stats_frame = ctk.CTkFrame(self, fg_color="transparent")
+        stats_frame.pack(pady=5, padx=20, fill="x")
+        self.label_stats_h = ctk.CTkLabel(stats_frame, text="", font=("Arial", 11, "bold"))
+        self.label_stats_h.pack(anchor="w")
+        self.locale.register(self.label_stats_h, "norm_stats_header")
+        
+        self.label_w_range = ctk.CTkLabel(stats_frame, text="", font=("Arial", 10))
+        self.label_w_range.pack(anchor="w", padx=10)
+        self.locale.register(self.label_w_range, "norm_width", suffix=f" {min_w}px ~ {max_w}px")
+        
+        self.label_h_range = ctk.CTkLabel(stats_frame, text="", font=("Arial", 10))
+        self.label_h_range.pack(anchor="w", padx=10)
+        self.locale.register(self.label_h_range, "norm_height", suffix=f" {min_h}px ~ {max_h}px")
+        
+        # 2. Target Dimensions
+        self.input_frame = ctk.CTkFrame(self)
+        self.input_frame.pack(pady=10, padx=20, fill="x")
+        
+        self.label_target_res = ctk.CTkLabel(self.input_frame, text="", font=("Arial", 12, "bold"))
+        self.label_target_res.pack(pady=5, padx=10, anchor="w")
+        self.locale.register(self.label_target_res, "norm_target_res")
+        
+        dim_frame = ctk.CTkFrame(self.input_frame, fg_color="transparent")
+        dim_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(dim_frame, text="W:").pack(side="left")
+        self.entry_w = ctk.CTkEntry(dim_frame, width=80)
+        self.entry_w.pack(side="left", padx=5)
+        self.entry_w.insert(0, str(max_w) if not self.settings["enabled"] else str(self.settings["target_w"]))
+        
+        ctk.CTkLabel(dim_frame, text="H:").pack(side="left", padx=(10, 0))
+        self.entry_h = ctk.CTkEntry(dim_frame, width=80)
+        self.entry_h.pack(side="left", padx=5)
+        self.entry_h.insert(0, str(max_h) if not self.settings["enabled"] else str(self.settings["target_h"]))
+        
+        # 3. Frame Duration
+        self.dur_frame = ctk.CTkFrame(self)
+        self.dur_frame.pack(pady=5, padx=20, fill="x")
+        self.label_dur = ctk.CTkLabel(self.dur_frame, text="", font=("Arial", 11, "bold"))
+        self.label_dur.pack(side="left", padx=10, pady=10)
+        self.locale.register(self.label_dur, "norm_duration")
+        
+        self.entry_duration = ctk.CTkEntry(self.dur_frame, width=80)
+        self.entry_duration.pack(side="right", padx=10)
+        self.entry_duration.insert(0, str(self.settings.get("duration", 100)))
+        ToolTip(self.entry_duration, self.locale.get("tt_duration"))
+
+        # 4. Strategies
+        self.strat_frame = ctk.CTkFrame(self)
+        self.strat_frame.pack(pady=10, padx=20, fill="x")
+        
+        self.label_strat_h = ctk.CTkLabel(self.strat_frame, text="", font=("Arial", 12, "bold"))
+        self.label_strat_h.pack(pady=5, padx=10, anchor="w")
+        self.locale.register(self.label_strat_h, "norm_strategy")
+        
+        # Upscale
+        up_row = ctk.CTkFrame(self.strat_frame, fg_color="transparent")
+        up_row.pack(fill="x", padx=10, pady=2)
+        self.label_up = ctk.CTkLabel(up_row, text="", width=100, anchor="w")
+        self.label_up.pack(side="left")
+        self.locale.register(self.label_up, "norm_upscale")
+        
+        self.opt_upscale = ctk.CTkOptionMenu(up_row, values=["Stretch", "Pad"], height=24)
+        self.opt_upscale.pack(side="right", fill="x", expand=True)
+        self.opt_upscale.set(self.settings["upscale_strategy"])
+        
+        # Downscale
+        down_row = ctk.CTkFrame(self.strat_frame, fg_color="transparent")
+        down_row.pack(fill="x", padx=10, pady=2)
+        self.label_down = ctk.CTkLabel(down_row, text="", width=100, anchor="w")
+        self.label_down.pack(side="left")
+        self.locale.register(self.label_down, "norm_downscale")
+        
+        self.opt_downscale = ctk.CTkOptionMenu(down_row, values=["Center Crop", "Fit & Pad", "Compress"], height=24)
+        self.opt_downscale.pack(side="right", fill="x", expand=True)
+        self.opt_downscale.set(self.settings["downscale_strategy"])
+        
+        # Initial State Sync
+        self.toggle_widgets()
+
+        # Buttons
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(side="bottom", pady=20, fill="x")
+        
+        self.btn_apply = ctk.CTkButton(btn_row, text="", command=self.apply, fg_color="#2ecc71", hover_color="#27ae60")
+        self.btn_apply.pack(side="left", padx=20, expand=True)
+        self.locale.register(self.btn_apply, "norm_apply")
+        
+        self.btn_cancel = ctk.CTkButton(btn_row, text="", command=self.destroy)
+        self.btn_cancel.pack(side="right", padx=20, expand=True)
+        self.locale.register(self.btn_cancel, "norm_cancel")
+
+    def toggle_widgets(self):
+        """Enables or disables all input widgets based on the master switch."""
+        state = "normal" if self.var_enabled.get() else "disabled"
+        
+        # Update states
+        self.entry_w.configure(state=state)
+        self.entry_h.configure(state=state)
+        self.entry_duration.configure(state=state)
+        self.opt_upscale.configure(state=state)
+        self.opt_downscale.configure(state=state)
+        
+        # Visual feedback: Dim frames if disabled
+        alpha = 1.0 if self.var_enabled.get() else 0.5
+        for f in [self.input_frame, self.dur_frame, self.strat_frame]:
+            f.configure(fg_color="gray20" if state == "normal" else "gray15")
+
+    def apply(self):
+        try:
+            tw = int(self.entry_w.get())
+            th = int(self.entry_h.get())
+            dur = int(self.entry_duration.get())
+            if tw <= 0 or th <= 0 or dur <= 0: raise ValueError
+            
+            self.settings.update({
+                "enabled": self.var_enabled.get(),
+                "target_w": tw,
+                "target_h": th,
+                "duration": dur,
+                "upscale_strategy": self.opt_upscale.get(),
+                "downscale_strategy": self.opt_downscale.get()
+            })
+            
+            if self.var_enabled.get():
+                self.parent.btn_res_settings.configure(text=f"✅ {tw}x{th} 규격화 적용 중")
+            else:
+                self.parent.btn_res_settings.configure(text="📏 이미지 크기 설정 (Resolution Settings)")
+                
+            self.destroy()
+        except ValueError:
+            from tkinter import messagebox
+            messagebox.showerror("입력 오류", "유효한 가로/세로 크기를 입력하세요.")
 
 class PluginWindow(ctk.CTkToplevel):
     """

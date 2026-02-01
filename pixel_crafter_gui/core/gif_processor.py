@@ -3,7 +3,8 @@ from core.processor import pixelate_image, add_outline
 from core.palette import apply_palette_unified
 import os
 
-def process_gif(input_path, output_path, pixel_size, palette_name, custom_colors=16, dither=True, outline_enabled=False):
+def process_gif(input_path, output_path, pixel_size, palette_name, custom_colors=16, dither=True, outline_enabled=False,
+                extract_policy="Standard", mapping_policy="Classic", w_sat=0.4, w_con=0.3, w_rar=0.3, auto_optimal=False):
     try:
         # Open the original GIF
         img = Image.open(input_path)
@@ -25,7 +26,9 @@ def process_gif(input_path, output_path, pixel_size, palette_name, custom_colors
             small_frame = frame_rgba.resize((small_w, small_h), resample=Image.BOX)
             
             # 3. Apply Palette (core.palette.apply_palette_unified handles RGBA)
-            processed_small = apply_palette_unified(small_frame, palette_name, custom_colors, dither)
+            processed_small = apply_palette_unified(small_frame, palette_name, custom_colors, dither,
+                                                   extract_policy=extract_policy, mapping_policy=mapping_policy,
+                                                   w_sat=w_sat, w_con=w_con, w_rar=w_rar, auto_optimal=auto_optimal)
             
             # 4. Add Outline if requested
             if outline_enabled:
